@@ -392,23 +392,24 @@ impl Text {
                 out.push(if use_hex { '\u{04}' } else { '\u{03}' });
                 let bare_reset = span.style.fg.is_none() && span.style.bg.is_none();
 
+                use std::fmt::Write;
                 if use_hex {
                     if let Some(fg) = span.style.fg {
                         let (r, g, b) = fg.as_rgb();
-                        out.push_str(&format!("{:02X}{:02X}{:02X}", r, g, b));
+                        let _ = write!(out, "{:02X}{:02X}{:02X}", r, g, b);
                     }
                     if let Some(bg) = span.style.bg {
                         let (r, g, b) = bg.as_rgb();
                         out.push(',');
-                        out.push_str(&format!("{:02X}{:02X}{:02X}", r, g, b));
+                        let _ = write!(out, "{:02X}{:02X}{:02X}", r, g, b);
                     }
                 } else {
                     if let Some(ColorValue::Palette(fg)) = span.style.fg {
-                        out.push_str(&format!("{:02}", fg.code()));
+                        let _ = write!(out, "{:02}", fg.code());
                     }
                     if let Some(ColorValue::Palette(bg)) = span.style.bg {
                         out.push(',');
-                        out.push_str(&format!("{:02}", bg.code()));
+                        let _ = write!(out, "{:02}", bg.code());
                     }
                 }
 
@@ -486,26 +487,25 @@ impl Text {
     /// Operating on grapheme clusters rather than `char`s is what keeps
     /// [`Text::wrap`] from ever tearing a multi-codepoint character (a
     /// combining accent, a flag, a ZWJ emoji sequence) in half.
-    fn flatten_graphemes(&self) -> Vec<(String, Style)> {
+    fn flatten_graphemes(&self) -> Vec<(&str, Style)> {
         self.spans
             .iter()
             .flat_map(|s| {
                 let style = s.style;
                 s.text
                     .graphemes(true)
-                    .map(move |g| (g.to_string(), style))
-                    .collect::<Vec<_>>()
+                    .map(move |g| (g, style))
             })
             .collect()
     }
 
-    fn from_units(units: &[(String, Style)]) -> Text {
+    fn from_units(units: &[(&str, Style)]) -> Text {
         let mut spans: Vec<Span> = Vec::new();
         for (g, style) in units {
             match spans.last_mut() {
                 Some(last) if last.style == *style => last.text.push_str(g),
                 _ => spans.push(Span {
-                    text: g.clone(),
+                    text: g.to_string(),
                     style: *style,
                 }),
             }
@@ -520,8 +520,8 @@ impl Text {
         }
 
         // Group into whitespace-delimited words, each a run of (grapheme, style).
-        let mut words: Vec<Vec<(String, Style)>> = Vec::new();
-        let mut current: Vec<(String, Style)> = Vec::new();
+        let mut words: Vec<Vec<(&str, Style)>> = Vec::new();
+        let mut current: Vec<(&str, Style)> = Vec::new();
         for (g, style) in units {
             let is_space = g == " ";
             current.push((g, style));
@@ -533,8 +533,8 @@ impl Text {
             words.push(current);
         }
 
-        let mut lines: Vec<Vec<(String, Style)>> = Vec::new();
-        let mut line: Vec<(String, Style)> = Vec::new();
+        let mut lines: Vec<Vec<(&str, Style)>> = Vec::new();
+        let mut line: Vec<(&str, Style)> = Vec::new();
         let mut line_len = 0usize;
         let mut line_style = Style::default();
 
@@ -828,7 +828,7 @@ fn transition_bytes(from: Style, to: Style, next_char: Option<char>) -> usize {
 
 /// Byte cost of appending `word` to a line whose running style is
 /// `start_style`, plus the style it leaves the line in.
-fn word_cost(start_style: Style, word: &[(String, Style)]) -> (usize, Style) {
+fn word_cost(start_style: Style, word: &[(&str, Style)]) -> (usize, Style) {
     let mut len = 0;
     let mut cur = start_style;
     for (g, style) in word {
@@ -843,9 +843,9 @@ fn word_cost(start_style: Style, word: &[(String, Style)]) -> (usize, Style) {
 // Hard-splitting an overlong "word" at a grapheme-cluster boundary
 // ---------------------------------------------------------------------------
 
-fn hard_split(word: &[(String, Style)], max_bytes: usize) -> Vec<Vec<(String, Style)>> {
+fn hard_split<'a>(word: &[(&'a str, Style)], max_bytes: usize) -> Vec<Vec<(&'a str, Style)>> {
     let mut pieces = Vec::new();
-    let mut current: Vec<(String, Style)> = Vec::new();
+    let mut current: Vec<(&'a str, Style)> = Vec::new();
     let mut cur_style = Style::default();
     let mut cur_len = 0usize;
 
@@ -860,7 +860,7 @@ fn hard_split(word: &[(String, Style)], max_bytes: usize) -> Vec<Vec<(String, St
         } else {
             cur_len += cost;
         }
-        current.push((g.clone(), *style));
+        current.push((*g, *style));
         cur_style = *style;
     }
     if !current.is_empty() {
