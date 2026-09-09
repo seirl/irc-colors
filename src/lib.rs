@@ -934,15 +934,13 @@ fn parse_irc(input: &str) -> Text {
     let mut buf = String::new();
     let mut s = input;
 
-    macro_rules! flush {
-        () => {
-            if !buf.is_empty() {
-                spans.push(Span {
-                    text: std::mem::take(&mut buf),
-                    style,
-                });
-            }
-        };
+    fn flush(buf: &mut String, spans: &mut Vec<Span>, style: Style) {
+        if !buf.is_empty() {
+            spans.push(Span {
+                text: std::mem::take(buf),
+                style,
+            });
+        }
     }
 
     // Reads up to `max_digits` ASCII digits from the start of `s`.
@@ -1010,58 +1008,42 @@ fn parse_irc(input: &str) -> Text {
     while let Some(c) = s.chars().next() {
         s = &s[c.len_utf8()..];
         match c {
-            '\u{02}' => {
-                flush!();
-                style.bold = !style.bold;
-            }
-            '\u{1d}' => {
-                flush!();
-                style.italic = !style.italic;
-            }
-            '\u{1f}' => {
-                flush!();
-                style.underline = !style.underline;
-            }
-            '\u{1e}' => {
-                flush!();
-                style.strikethrough = !style.strikethrough;
-            }
-            '\u{11}' => {
-                flush!();
-                style.monospace = !style.monospace;
-            }
-            '\u{16}' => {
-                flush!();
-                style.reverse = !style.reverse;
-            }
-            '\u{0f}' => {
-                flush!();
-                style = Style::default();
-            }
-            '\u{03}' => {
-                flush!();
-                let (fg, bg) = read_color_pair(&mut s, |s| read_digits(s, 2));
-                if let Some(fg_code) = fg {
-                    style.fg = Color::from_code(fg_code).map(ColorValue::Palette);
-                    if let Some(bg_code) = bg {
-                        style.bg = Color::from_code(bg_code).map(ColorValue::Palette);
+            '\u{02}' | '\u{1d}' | '\u{1f}' | '\u{1e}' | '\u{11}' | '\u{16}' | '\u{0f}'
+            | '\u{03}' | '\u{04}' => {
+                flush(&mut buf, &mut spans, style);
+                match c {
+                    '\u{02}' => style.bold = !style.bold,
+                    '\u{1d}' => style.italic = !style.italic,
+                    '\u{1f}' => style.underline = !style.underline,
+                    '\u{1e}' => style.strikethrough = !style.strikethrough,
+                    '\u{11}' => style.monospace = !style.monospace,
+                    '\u{16}' => style.reverse = !style.reverse,
+                    '\u{0f}' => style = Style::default(),
+                    '\u{03}' => {
+                        let (fg, bg) = read_color_pair(&mut s, |s| read_digits(s, 2));
+                        if let Some(fg_code) = fg {
+                            style.fg = Color::from_code(fg_code).map(ColorValue::Palette);
+                            if let Some(bg_code) = bg {
+                                style.bg = Color::from_code(bg_code).map(ColorValue::Palette);
+                            }
+                        } else {
+                            style.fg = None;
+                            style.bg = bg.and_then(Color::from_code).map(ColorValue::Palette);
+                        }
                     }
-                } else {
-                    style.fg = None;
-                    style.bg = bg.and_then(Color::from_code).map(ColorValue::Palette);
-                }
-            }
-            '\u{04}' => {
-                flush!();
-                let (fg, bg) = read_color_pair(&mut s, read_hex6);
-                if let Some((r, g, b)) = fg {
-                    style.fg = Some(ColorValue::Rgb(r, g, b));
-                    if let Some((r, g, b)) = bg {
-                        style.bg = Some(ColorValue::Rgb(r, g, b));
+                    '\u{04}' => {
+                        let (fg, bg) = read_color_pair(&mut s, read_hex6);
+                        if let Some((r, g, b)) = fg {
+                            style.fg = Some(ColorValue::Rgb(r, g, b));
+                            if let Some((r, g, b)) = bg {
+                                style.bg = Some(ColorValue::Rgb(r, g, b));
+                            }
+                        } else {
+                            style.fg = None;
+                            style.bg = bg.map(|(r, g, b)| ColorValue::Rgb(r, g, b));
+                        }
                     }
-                } else {
-                    style.fg = None;
-                    style.bg = bg.map(|(r, g, b)| ColorValue::Rgb(r, g, b));
+                    _ => unreachable!(),
                 }
             }
             _ => {
@@ -1069,7 +1051,7 @@ fn parse_irc(input: &str) -> Text {
             }
         }
     }
-    flush!();
+    flush(&mut buf, &mut spans, style);
 
     Text { spans }
 }
