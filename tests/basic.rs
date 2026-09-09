@@ -214,3 +214,21 @@ fn wrap_scales_linearly_not_quadratically() {
         big_time
     );
 }
+
+#[test]
+fn background_is_cleared_when_next_span_has_foreground_only() {
+    let msg = "colored bg".red().on_blue() + " no bg".green();
+    let rendered = msg.to_irc_string();
+    let reparsed = Text::parse(&rendered);
+
+    assert_eq!(reparsed.spans[0].style.fg, Some(ColorValue::Palette(Color::Red)));
+    assert_eq!(reparsed.spans[0].style.bg, Some(ColorValue::Palette(Color::Blue)));
+
+    assert_eq!(reparsed.spans[1].style.fg, Some(ColorValue::Palette(Color::Green)));
+    assert_eq!(
+        reparsed.spans[1].style.bg,
+        None,
+        "background color should have been cleared, but was: {:?}",
+        reparsed.spans[1].style.bg
+    );
+}

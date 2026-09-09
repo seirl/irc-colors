@@ -386,6 +386,16 @@ impl Text {
             }
 
             if (span.style.fg, span.style.bg) != (cur.fg, cur.bg) {
+                // If the previous style had a background color, but the new style
+                // has no background color and specifies a foreground color, we must
+                // reset colors first. In IRC, \x03<fg> leaves the existing background
+                // untouched.
+                if cur.bg.is_some() && span.style.bg.is_none() && span.style.fg.is_some() {
+                    let cur_was_hex = cur.fg.is_some_and(ColorValue::is_rgb)
+                        || cur.bg.is_some_and(ColorValue::is_rgb);
+                    out.push(if cur_was_hex { '\u{04}' } else { '\u{03}' });
+                }
+
                 let use_hex = span.style.fg.is_some_and(ColorValue::is_rgb)
                     || span.style.bg.is_some_and(ColorValue::is_rgb);
 
@@ -793,6 +803,9 @@ fn transition_bytes(from: Style, to: Style, next_char: Option<char>) -> usize {
     }
 
     if (to.fg, to.bg) != (from.fg, from.bg) {
+        if from.bg.is_some() && to.bg.is_none() && to.fg.is_some() {
+            n += 1;
+        }
         n += 1; // the \x03 or \x04 byte itself
         let use_hex =
             to.fg.is_some_and(ColorValue::is_rgb) || to.bg.is_some_and(ColorValue::is_rgb);
