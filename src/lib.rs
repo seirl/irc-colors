@@ -1037,6 +1037,15 @@ fn parse_irc(input: &str) -> Text {
                         }
                     }
                     None => {
+                        if i < chars.len() && chars[i] == ',' {
+                            let mut j = i + 1;
+                            if let Some((r, g, b)) = read_hex6(&chars, &mut j) {
+                                style.fg = None;
+                                style.bg = Some(ColorValue::Rgb(r, g, b));
+                                i = j;
+                                continue;
+                            }
+                        }
                         style.fg = None;
                         style.bg = None;
                     }

@@ -242,3 +242,13 @@ fn parse_does_not_swallow_comma_digit_after_foreground_color() {
     assert_eq!(reparsed.spans[0].style.fg, Some(ColorValue::Palette(Color::Red)));
     assert_eq!(reparsed.spans[0].style.bg, None);
 }
+
+#[test]
+fn hex_background_only_round_trip() {
+    let original = "text".on_rgb(255, 0, 0);
+    let rendered = original.to_irc_string();
+    let reparsed = Text::parse(&rendered);
+    assert_eq!(reparsed.plain(), "text");
+    assert_eq!(reparsed.spans[0].style.fg, None);
+    assert_eq!(reparsed.spans[0].style.bg, Some(ColorValue::Rgb(255, 0, 0)));
+}
