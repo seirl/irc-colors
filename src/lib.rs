@@ -423,15 +423,21 @@ impl Text {
                     }
                 }
 
-                // A bare "reset color" code followed by a digit or comma
-                // would be mis-parsed as part of the code. Nudge it apart
-                // with a harmless bold-toggle-toggle.
-                if bare_reset {
-                    if let Some(first) = span.text.chars().next() {
-                        if first.is_ascii_digit() || first == ',' {
-                            out.push('\u{02}');
-                            out.push('\u{02}');
-                        }
+                // Disambiguate against parser eating text into color code:
+                // 1) A bare reset followed by a digit or comma would be parsed as color.
+                // 2) A foreground-only code followed by a comma would be parsed as background.
+                // Nudge apart with a harmless bold-toggle-toggle.
+                if let Some(first) = span.text.chars().next() {
+                    let nudge = if bare_reset {
+                        first.is_ascii_digit() || first == ','
+                    } else if span.style.fg.is_some() && span.style.bg.is_none() {
+                        first == ','
+                    } else {
+                        false
+                    };
+                    if nudge {
+                        out.push('\u{02}');
+                        out.push('\u{02}');
                     }
                 }
             }
@@ -827,11 +833,16 @@ fn transition_bytes(from: Style, to: Style, next_char: Option<char>) -> usize {
             }
         }
 
-        if bare_reset {
-            if let Some(c) = next_char {
-                if c.is_ascii_digit() || c == ',' {
-                    n += 2;
-                }
+        if let Some(c) = next_char {
+            let nudge = if bare_reset {
+                c.is_ascii_digit() || c == ','
+            } else if to.fg.is_some() && to.bg.is_none() {
+                c == ','
+            } else {
+                false
+            };
+            if nudge {
+                n += 2;
             }
         }
     }

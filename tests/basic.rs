@@ -232,3 +232,13 @@ fn background_is_cleared_when_next_span_has_foreground_only() {
         reparsed.spans[1].style.bg
     );
 }
+
+#[test]
+fn parse_does_not_swallow_comma_digit_after_foreground_color() {
+    let msg = ",50 USD".red();
+    let rendered = msg.to_irc_string();
+    let reparsed = Text::parse(&rendered);
+    assert_eq!(reparsed.plain(), ",50 USD");
+    assert_eq!(reparsed.spans[0].style.fg, Some(ColorValue::Palette(Color::Red)));
+    assert_eq!(reparsed.spans[0].style.bg, None);
+}
