@@ -198,15 +198,6 @@ pub struct Span {
     pub style: Style,
 }
 
-macro_rules! style_color_shortcut_methods {
-    ($( $variant:ident => $fg_name:ident, $bg_name:ident );* $(;)?) => {
-        $(
-            pub fn $fg_name(self) -> Self { self.fg(Color::$variant) }
-            pub fn $bg_name(self) -> Self { self.bg(Color::$variant) }
-        )*
-    };
-}
-
 impl Style {
     pub fn new() -> Self {
         Style::default()
@@ -252,24 +243,38 @@ impl Style {
         self.bg(ColorValue::Rgb(r, g, b))
     }
 
-    style_color_shortcut_methods! {
-        White => white, on_white;
-        Black => black, on_black;
-        Blue => blue, on_blue;
-        Green => green, on_green;
-        Red => red, on_red;
-        Brown => brown, on_brown;
-        Magenta => magenta, on_magenta;
-        Orange => orange, on_orange;
-        Yellow => yellow, on_yellow;
-        LightGreen => light_green, on_light_green;
-        Cyan => cyan, on_cyan;
-        LightCyan => light_cyan, on_light_cyan;
-        LightBlue => light_blue, on_light_blue;
-        Pink => pink, on_pink;
-        Grey => grey, on_grey;
-        LightGrey => light_grey, on_light_grey;
-    }
+    pub fn white(self) -> Self { self.fg(Color::White) }
+    pub fn on_white(self) -> Self { self.bg(Color::White) }
+    pub fn black(self) -> Self { self.fg(Color::Black) }
+    pub fn on_black(self) -> Self { self.bg(Color::Black) }
+    pub fn blue(self) -> Self { self.fg(Color::Blue) }
+    pub fn on_blue(self) -> Self { self.bg(Color::Blue) }
+    pub fn green(self) -> Self { self.fg(Color::Green) }
+    pub fn on_green(self) -> Self { self.bg(Color::Green) }
+    pub fn red(self) -> Self { self.fg(Color::Red) }
+    pub fn on_red(self) -> Self { self.bg(Color::Red) }
+    pub fn brown(self) -> Self { self.fg(Color::Brown) }
+    pub fn on_brown(self) -> Self { self.bg(Color::Brown) }
+    pub fn magenta(self) -> Self { self.fg(Color::Magenta) }
+    pub fn on_magenta(self) -> Self { self.bg(Color::Magenta) }
+    pub fn orange(self) -> Self { self.fg(Color::Orange) }
+    pub fn on_orange(self) -> Self { self.bg(Color::Orange) }
+    pub fn yellow(self) -> Self { self.fg(Color::Yellow) }
+    pub fn on_yellow(self) -> Self { self.bg(Color::Yellow) }
+    pub fn light_green(self) -> Self { self.fg(Color::LightGreen) }
+    pub fn on_light_green(self) -> Self { self.bg(Color::LightGreen) }
+    pub fn cyan(self) -> Self { self.fg(Color::Cyan) }
+    pub fn on_cyan(self) -> Self { self.bg(Color::Cyan) }
+    pub fn light_cyan(self) -> Self { self.fg(Color::LightCyan) }
+    pub fn on_light_cyan(self) -> Self { self.bg(Color::LightCyan) }
+    pub fn light_blue(self) -> Self { self.fg(Color::LightBlue) }
+    pub fn on_light_blue(self) -> Self { self.bg(Color::LightBlue) }
+    pub fn pink(self) -> Self { self.fg(Color::Pink) }
+    pub fn on_pink(self) -> Self { self.bg(Color::Pink) }
+    pub fn grey(self) -> Self { self.fg(Color::Grey) }
+    pub fn on_grey(self) -> Self { self.bg(Color::Grey) }
+    pub fn light_grey(self) -> Self { self.fg(Color::LightGrey) }
+    pub fn on_light_grey(self) -> Self { self.bg(Color::LightGrey) }
 
     /// Returns a new style with `fallback` filling in any attributes not
     /// already set on `self`. Formatting toggles (bold, italic, etc.) are unioned.
@@ -695,14 +700,6 @@ impl AddAssign<String> for Text {
 // Colorize — the fun, chainable builder, `colored`/`owo-colors`-style
 // ---------------------------------------------------------------------------
 
-macro_rules! color_shortcut_methods {
-    ($( $variant:ident => $fg_name:ident, $bg_name:ident );* $(;)?) => {
-        $(
-            fn $fg_name(self) -> Text { self.fg(Color::$variant) }
-            fn $bg_name(self) -> Text { self.bg(Color::$variant) }
-        )*
-    };
-}
 
 /// Chainable styling for anything that can become [`Text`]: `&str`,
 /// `String`, or an existing `Text`. Calling a method twice (e.g. `.bold()`
@@ -785,24 +782,38 @@ pub trait Colorize: Into<Text> + Sized {
         self.bg(ColorValue::Rgb(r, g, b))
     }
 
-    color_shortcut_methods! {
-        White => white, on_white;
-        Black => black, on_black;
-        Blue => blue, on_blue;
-        Green => green, on_green;
-        Red => red, on_red;
-        Brown => brown, on_brown;
-        Magenta => magenta, on_magenta;
-        Orange => orange, on_orange;
-        Yellow => yellow, on_yellow;
-        LightGreen => light_green, on_light_green;
-        Cyan => cyan, on_cyan;
-        LightCyan => light_cyan, on_light_cyan;
-        LightBlue => light_blue, on_light_blue;
-        Pink => pink, on_pink;
-        Grey => grey, on_grey;
-        LightGrey => light_grey, on_light_grey;
-    }
+    fn white(self) -> Text { self.fg(Color::White) }
+    fn on_white(self) -> Text { self.bg(Color::White) }
+    fn black(self) -> Text { self.fg(Color::Black) }
+    fn on_black(self) -> Text { self.bg(Color::Black) }
+    fn blue(self) -> Text { self.fg(Color::Blue) }
+    fn on_blue(self) -> Text { self.bg(Color::Blue) }
+    fn green(self) -> Text { self.fg(Color::Green) }
+    fn on_green(self) -> Text { self.bg(Color::Green) }
+    fn red(self) -> Text { self.fg(Color::Red) }
+    fn on_red(self) -> Text { self.bg(Color::Red) }
+    fn brown(self) -> Text { self.fg(Color::Brown) }
+    fn on_brown(self) -> Text { self.bg(Color::Brown) }
+    fn magenta(self) -> Text { self.fg(Color::Magenta) }
+    fn on_magenta(self) -> Text { self.bg(Color::Magenta) }
+    fn orange(self) -> Text { self.fg(Color::Orange) }
+    fn on_orange(self) -> Text { self.bg(Color::Orange) }
+    fn yellow(self) -> Text { self.fg(Color::Yellow) }
+    fn on_yellow(self) -> Text { self.bg(Color::Yellow) }
+    fn light_green(self) -> Text { self.fg(Color::LightGreen) }
+    fn on_light_green(self) -> Text { self.bg(Color::LightGreen) }
+    fn cyan(self) -> Text { self.fg(Color::Cyan) }
+    fn on_cyan(self) -> Text { self.bg(Color::Cyan) }
+    fn light_cyan(self) -> Text { self.fg(Color::LightCyan) }
+    fn on_light_cyan(self) -> Text { self.bg(Color::LightCyan) }
+    fn light_blue(self) -> Text { self.fg(Color::LightBlue) }
+    fn on_light_blue(self) -> Text { self.bg(Color::LightBlue) }
+    fn pink(self) -> Text { self.fg(Color::Pink) }
+    fn on_pink(self) -> Text { self.bg(Color::Pink) }
+    fn grey(self) -> Text { self.fg(Color::Grey) }
+    fn on_grey(self) -> Text { self.bg(Color::Grey) }
+    fn light_grey(self) -> Text { self.fg(Color::LightGrey) }
+    fn on_light_grey(self) -> Text { self.bg(Color::LightGrey) }
 }
 
 impl<T: Into<Text>> Colorize for T {}
