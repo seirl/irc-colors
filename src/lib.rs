@@ -270,6 +270,21 @@ impl Style {
         Grey => grey, on_grey;
         LightGrey => light_grey, on_light_grey;
     }
+
+    /// Returns a new style with `fallback` filling in any attributes not
+    /// already set on `self`. Formatting toggles (bold, italic, etc.) are unioned.
+    pub fn with_fallback(self, fallback: Style) -> Self {
+        Style {
+            fg: self.fg.or(fallback.fg),
+            bg: self.bg.or(fallback.bg),
+            bold: self.bold | fallback.bold,
+            italic: self.italic | fallback.italic,
+            underline: self.underline | fallback.underline,
+            strikethrough: self.strikethrough | fallback.strikethrough,
+            monospace: self.monospace | fallback.monospace,
+            reverse: self.reverse | fallback.reverse,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -321,35 +336,36 @@ impl Text {
             .sum()
     }
 
-    /// Combine several already-styled pieces under one *fallback* style: a
-    /// child span keeps its own fg/bg if it set one, otherwise inherits the
-    /// wrapper's; bold/italic/underline/strikethrough/monospace/reverse are
-    /// unioned in. This is the "nested tag" composition some IRC formatting
-    /// libraries offer — most people won't need it since the [`Colorize`]
-    /// builder methods below are usually more direct, but it's handy for
-    /// composing pre-built chunks.
+    /// Apply a fallback style across all spans in this text: a child span
+    /// keeps its own fg/bg if it set one, otherwise inherits the fallback's;
+    /// formatting flags (bold, italic, etc.) are unioned in. This is the
+    /// "nested tag" composition some IRC formatting libraries offer — most
+    /// people won't need it since the [`Colorize`] builder methods below are
+    /// usually more direct, but it's handy for composing pre-built chunks.
     ///
     /// ```
     /// use irc_color::{Text, Style, Colorize};
     /// let inner = "SPARTA".bold().blue();
-    /// let msg = Text::wrap_style(Style::new().red().underline(), "This is " + inner);
+    /// let msg = ("This is " + inner).with_fallback_style(Style::new().red().underline());
     /// // "This is " -> red + underline
     /// // "SPARTA"   -> stays blue (child wins), gains underline (union), keeps bold
     /// # let _ = msg;
     /// ```
-    pub fn wrap_style(style: Style, inner: impl Into<Text>) -> Text {
-        let mut inner = inner.into();
-        for span in inner.spans.iter_mut() {
-            span.style.fg = span.style.fg.or(style.fg);
-            span.style.bg = span.style.bg.or(style.bg);
-            span.style.bold |= style.bold;
-            span.style.italic |= style.italic;
-            span.style.underline |= style.underline;
-            span.style.strikethrough |= style.strikethrough;
-            span.style.monospace |= style.monospace;
-            span.style.reverse |= style.reverse;
+    pub fn with_fallback_style(mut self, fallback: Style) -> Text {
+        for span in &mut self.spans {
+            span.style = span.style.with_fallback(fallback);
         }
-        inner
+        self
+    }
+
+    /// Static constructor: combine several already-styled pieces under one fallback style.
+    pub fn with_fallback(fallback: Style, inner: impl Into<Text>) -> Text {
+        inner.into().with_fallback_style(fallback)
+    }
+
+    #[deprecated(note = "renamed to with_fallback / with_fallback_style to avoid confusion with line-wrapping")]
+    pub fn wrap_style(style: Style, inner: impl Into<Text>) -> Text {
+        Self::with_fallback(style, inner)
     }
 
     /// Serialize to raw IRC-formatted bytes (as a `String`), emitting only
@@ -357,7 +373,7 @@ impl Text {
     /// spans. This is what you send over the wire.
     ///
     /// If a span's `fg`/`bg` mix a palette [`Color`] with an RGB value (only
-    /// possible via [`Text::wrap_style`] composition, not the ordinary
+    /// possible via [`Text::with_fallback`] composition, not the ordinary
     /// [`Colorize`] chain), both are still rendered correctly: the whole
     /// pair is sent in the hex form, with the palette side converted via
     /// its canonical RGB value ([`Color::to_rgb`]) rather than dropped.
@@ -741,6 +757,13 @@ pub trait Colorize: Into<Text> + Sized {
     /// Clear all styling on this text (equivalent to IRC's `\x0f` reset).
     fn reset(self) -> Text {
         self.styled(|_| Style::default())
+    }
+
+    /// Apply a fallback style across all spans: a child span keeps its own
+    /// fg/bg if it set one, otherwise inherits the fallback's; formatting
+    /// flags are unioned in.
+    fn with_fallback_style(self, fallback: Style) -> Text {
+        self.into().with_fallback_style(fallback)
     }
 
     fn fg(self, c: impl Into<ColorValue>) -> Text {

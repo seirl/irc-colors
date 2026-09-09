@@ -15,10 +15,11 @@ fn later_call_wins() {
 }
 
 #[test]
-fn wrap_style_child_wins_bg_inherits_formats_union() {
+fn fallback_style_child_wins_bg_inherits_formats_union() {
     use irc_color::Style;
     let inner = "SPARTA".bold().blue();
-    let msg = Text::wrap_style(Style::new().red().underline(), "This is " + inner);
+    let theme = Style::new().red().underline();
+    let msg = ("This is " + inner.clone()).with_fallback_style(theme);
     assert_eq!(msg.spans[0].style.fg, Some(ColorValue::Palette(Color::Red)));
     assert!(msg.spans[0].style.underline);
     assert_eq!(
@@ -27,6 +28,9 @@ fn wrap_style_child_wins_bg_inherits_formats_union() {
     ); // child wins
     assert!(msg.spans[1].style.bold); // kept its own
     assert!(msg.spans[1].style.underline); // inherited via union
+
+    let msg2 = Text::with_fallback(theme, "This is " + inner);
+    assert_eq!(msg, msg2);
 }
 
 #[test]
@@ -138,9 +142,9 @@ fn parse_supports_background_only_color_spec() {
 #[test]
 fn hex_and_palette_mixed_in_one_span_keeps_both_colors() {
     use irc_color::Style;
-    // Only reachable via wrap_style composition, not the ordinary builder.
+    // Only reachable via fallback style composition, not the ordinary builder.
     let base = "text".red(); // palette fg only
-    let merged = Text::wrap_style(Style::new().on_rgb(10, 20, 30), base);
+    let merged = base.with_fallback_style(Style::new().on_rgb(10, 20, 30));
     let rendered = merged.to_irc_string();
     let reparsed = Text::parse(&rendered);
     // Foreground must survive as its RGB equivalent, not vanish.
