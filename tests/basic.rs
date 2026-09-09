@@ -252,3 +252,11 @@ fn hex_background_only_round_trip() {
     assert_eq!(reparsed.spans[0].style.fg, None);
     assert_eq!(reparsed.spans[0].style.bg, Some(ColorValue::Rgb(255, 0, 0)));
 }
+
+#[test]
+fn string_add_text() {
+    let s = String::from("Hello, ");
+    let styled = s + "world".bold().red();
+    assert_eq!(styled.plain(), "Hello, world");
+    assert!(styled.spans[1].style.bold);
+}

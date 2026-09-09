@@ -648,6 +648,13 @@ impl Add<Text> for &str {
     }
 }
 
+impl Add<Text> for String {
+    type Output = Text;
+    fn add(self, rhs: Text) -> Text {
+        Text::raw(self) + rhs
+    }
+}
+
 // -- `+=`, for building messages incrementally in a loop --------------------
 
 impl AddAssign<Text> for Text {
