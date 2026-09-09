@@ -906,11 +906,10 @@ fn hard_split<'a>(word: &[(&'a str, Style)], max_bytes: usize) -> Vec<Vec<(&'a s
 // ---------------------------------------------------------------------------
 
 fn parse_irc(input: &str) -> Text {
-    let chars: Vec<char> = input.chars().collect();
-    let mut i = 0;
     let mut spans = Vec::new();
     let mut style = Style::default();
     let mut buf = String::new();
+    let mut s = input;
 
     macro_rules! flush {
         () => {
@@ -923,144 +922,127 @@ fn parse_irc(input: &str) -> Text {
         };
     }
 
-    // Reads up to `max_digits` ASCII digits starting at `i`, WITHOUT
-    // consuming anything if none are found. Returns the parsed number and
-    // advances `i` past it, or leaves `i` untouched.
-    fn read_digits(chars: &[char], i: &mut usize, max_digits: usize) -> Option<u8> {
-        let start = *i;
-        while *i < chars.len() && *i - start < max_digits && chars[*i].is_ascii_digit() {
-            *i += 1;
-        }
-        if *i == start {
+    // Reads up to `max_digits` ASCII digits from the start of `s`.
+    fn read_digits(s: &mut &str, max_digits: usize) -> Option<u8> {
+        let count = s
+            .chars()
+            .take(max_digits)
+            .take_while(|c| c.is_ascii_digit())
+            .count();
+        if count == 0 {
             None
         } else {
-            chars[start..*i].iter().collect::<String>().parse().ok()
+            let code = s[..count].parse::<u8>().ok()?;
+            *s = &s[count..];
+            Some(code)
         }
     }
 
-    // Reads exactly 6 hex digits starting at `i`, without consuming
-    // anything if the full run isn't there.
-    fn read_hex6(chars: &[char], i: &mut usize) -> Option<(u8, u8, u8)> {
-        let start = *i;
-        while *i < chars.len() && *i - start < 6 && chars[*i].is_ascii_hexdigit() {
-            *i += 1;
-        }
-        if *i - start == 6 {
-            let hex: String = chars[start..*i].iter().collect();
-            let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-            let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-            let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+    // Reads exactly 6 hex digits from the start of `s`.
+    fn read_hex6(s: &mut &str) -> Option<(u8, u8, u8)> {
+        if s.len() >= 6 && s.as_bytes()[..6].iter().all(|b| b.is_ascii_hexdigit()) {
+            let r = u8::from_str_radix(&s[0..2], 16).ok()?;
+            let g = u8::from_str_radix(&s[2..4], 16).ok()?;
+            let b = u8::from_str_radix(&s[4..6], 16).ok()?;
+            *s = &s[6..];
             Some((r, g, b))
         } else {
-            *i = start; // partial run: not a valid code, don't consume it
             None
         }
     }
 
-    while i < chars.len() {
-        let c = chars[i];
+    // Reads a foreground (optional) and background (optional, preceded by comma) pair.
+    fn read_color_pair<T>(
+        s: &mut &str,
+        read: impl Fn(&mut &str) -> Option<T>,
+    ) -> (Option<T>, Option<T>) {
+        match read(s) {
+            Some(fg) => {
+                let bg = if s.starts_with(',') {
+                    let mut peek = &s[1..];
+                    if let Some(bg) = read(&mut peek) {
+                        *s = peek;
+                        Some(bg)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                (Some(fg), bg)
+            }
+            None => {
+                if s.starts_with(',') {
+                    let mut peek = &s[1..];
+                    if let Some(bg) = read(&mut peek) {
+                        *s = peek;
+                        return (None, Some(bg));
+                    }
+                }
+                (None, None)
+            }
+        }
+    }
+
+    while let Some(c) = s.chars().next() {
+        s = &s[c.len_utf8()..];
         match c {
             '\u{02}' => {
                 flush!();
                 style.bold = !style.bold;
-                i += 1;
             }
             '\u{1d}' => {
                 flush!();
                 style.italic = !style.italic;
-                i += 1;
             }
             '\u{1f}' => {
                 flush!();
                 style.underline = !style.underline;
-                i += 1;
             }
             '\u{1e}' => {
                 flush!();
                 style.strikethrough = !style.strikethrough;
-                i += 1;
             }
             '\u{11}' => {
                 flush!();
                 style.monospace = !style.monospace;
-                i += 1;
             }
             '\u{16}' => {
                 flush!();
                 style.reverse = !style.reverse;
-                i += 1;
             }
             '\u{0f}' => {
                 flush!();
                 style = Style::default();
-                i += 1;
             }
             '\u{03}' => {
                 flush!();
-                i += 1;
-                match read_digits(&chars, &mut i, 2) {
-                    Some(fg_code) => {
-                        style.fg = Color::from_code(fg_code).map(ColorValue::Palette);
-                        // Only consume the comma if real background digits
-                        // follow it — otherwise it's just a comma in the
-                        // text, and must be left alone.
-                        if i < chars.len() && chars[i] == ',' {
-                            let mut j = i + 1;
-                            if let Some(bg_code) = read_digits(&chars, &mut j, 2) {
-                                style.bg = Color::from_code(bg_code).map(ColorValue::Palette);
-                                i = j;
-                            }
-                        }
+                let (fg, bg) = read_color_pair(&mut s, |s| read_digits(s, 2));
+                if let Some(fg_code) = fg {
+                    style.fg = Color::from_code(fg_code).map(ColorValue::Palette);
+                    if let Some(bg_code) = bg {
+                        style.bg = Color::from_code(bg_code).map(ColorValue::Palette);
                     }
-                    None => {
-                        // Bare \x03: either a full reset, or (less common)
-                        // a background-only spec like \x03,4.
-                        if i < chars.len() && chars[i] == ',' {
-                            let mut j = i + 1;
-                            if let Some(bg_code) = read_digits(&chars, &mut j, 2) {
-                                style.fg = None;
-                                style.bg = Color::from_code(bg_code).map(ColorValue::Palette);
-                                i = j;
-                                continue;
-                            }
-                        }
-                        style.fg = None;
-                        style.bg = None;
-                    }
+                } else {
+                    style.fg = None;
+                    style.bg = bg.and_then(Color::from_code).map(ColorValue::Palette);
                 }
             }
             '\u{04}' => {
                 flush!();
-                i += 1;
-                match read_hex6(&chars, &mut i) {
-                    Some((r, g, b)) => {
-                        style.fg = Some(ColorValue::Rgb(r, g, b));
-                        if i < chars.len() && chars[i] == ',' {
-                            let mut j = i + 1;
-                            if let Some((r, g, b)) = read_hex6(&chars, &mut j) {
-                                style.bg = Some(ColorValue::Rgb(r, g, b));
-                                i = j;
-                            }
-                        }
+                let (fg, bg) = read_color_pair(&mut s, read_hex6);
+                if let Some((r, g, b)) = fg {
+                    style.fg = Some(ColorValue::Rgb(r, g, b));
+                    if let Some((r, g, b)) = bg {
+                        style.bg = Some(ColorValue::Rgb(r, g, b));
                     }
-                    None => {
-                        if i < chars.len() && chars[i] == ',' {
-                            let mut j = i + 1;
-                            if let Some((r, g, b)) = read_hex6(&chars, &mut j) {
-                                style.fg = None;
-                                style.bg = Some(ColorValue::Rgb(r, g, b));
-                                i = j;
-                                continue;
-                            }
-                        }
-                        style.fg = None;
-                        style.bg = None;
-                    }
+                } else {
+                    style.fg = None;
+                    style.bg = bg.map(|(r, g, b)| ColorValue::Rgb(r, g, b));
                 }
             }
             _ => {
                 buf.push(c);
-                i += 1;
             }
         }
     }

@@ -260,3 +260,34 @@ fn string_add_text() {
     assert_eq!(styled.plain(), "Hello, world");
     assert!(styled.spans[1].style.bold);
 }
+
+#[test]
+fn parse_comprehensive_edge_cases() {
+    // 1-digit code
+    let t1 = Text::parse("\u{03}4Hello");
+    assert_eq!(t1.plain(), "Hello");
+    assert_eq!(t1.spans[0].style.fg, Some(ColorValue::Palette(Color::Red)));
+
+    // 1-digit fg, 1-digit bg
+    let t2 = Text::parse("\u{03}4,2Hello");
+    assert_eq!(t2.plain(), "Hello");
+    assert_eq!(t2.spans[0].style.fg, Some(ColorValue::Palette(Color::Red)));
+    assert_eq!(t2.spans[0].style.bg, Some(ColorValue::Palette(Color::Blue)));
+
+    // Bare reset in middle
+    let t3 = Text::parse("\u{03}04Red\u{03}Plain");
+    assert_eq!(t3.plain(), "RedPlain");
+    assert_eq!(t3.spans[0].style.fg, Some(ColorValue::Palette(Color::Red)));
+    assert_eq!(t3.spans[1].style.fg, None);
+
+    // Hex with lowercase digits
+    let t4 = Text::parse("\u{04}00ff00,0000ffText");
+    assert_eq!(t4.plain(), "Text");
+    assert_eq!(t4.spans[0].style.fg, Some(ColorValue::Rgb(0, 255, 0)));
+    assert_eq!(t4.spans[0].style.bg, Some(ColorValue::Rgb(0, 0, 255)));
+
+    // Incomplete hex digits (e.g. only 4 digits) does not eat text
+    let t5 = Text::parse("\u{04}FFAAText");
+    assert_eq!(t5.plain(), "FFAAText");
+    assert_eq!(t5.spans[0].style.fg, None);
+}
