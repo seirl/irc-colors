@@ -518,6 +518,10 @@ fn parse_stateful_toggles_and_inherited_background() {
 fn reverse_round_trip() {
     use irc_color::Style;
 
+    let direct = "inverted".reverse();
+    assert_eq!(direct.to_irc_string(), "\u{16}inverted\u{0f}");
+    assert_eq!(Text::parse(&direct.to_irc_string()), direct);
+
     let warn = Style::new().bold().reverse().grey().on_light_grey();
     let msg = Text::with_fallback(warn, "inverted");
     let wire = msg.to_irc_string();
@@ -525,6 +529,25 @@ fn reverse_round_trip() {
 
     let reparsed = Text::parse(&wire);
     assert_eq!(reparsed, msg);
+}
+
+#[test]
+fn colorize_reset_clears_style_and_coalesces_spans() {
+    let styled = "Hello ".bold().red() + "world".underline().blue();
+    assert_eq!(styled.spans.len(), 2);
+
+    let cleared = styled.reset();
+    assert_eq!(cleared, Text::raw("Hello world"));
+    assert_eq!(cleared.spans.len(), 1);
+    assert_eq!(cleared.to_irc_string(), "Hello world");
+}
+
+#[test]
+fn visible_len_counts_grapheme_clusters() {
+    assert_eq!(Text::new().visible_len(), 0);
+    // ZWJ family sequence (1 grapheme, 11 UTF-8 bytes) + combining accent "e\u{0301}" (1 grapheme) + "!" (1 grapheme)
+    let msg = "👨\u{200d}👩\u{200d}👦".bold().red() + "e\u{0301}!".blue();
+    assert_eq!(msg.visible_len(), 3);
 }
 
 #[test]
