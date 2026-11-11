@@ -17,9 +17,9 @@ fn later_call_wins() {
 #[test]
 fn fallback_style_child_wins_bg_inherits_formats_union() {
     use irc_colors::Style;
+    const THEME: Style = Style::new().red().underline();
     let inner = "SPARTA".bold().blue();
-    let theme = Style::new().red().underline();
-    let msg = ("This is " + inner.clone()).with_fallback_style(theme);
+    let msg = ("This is " + &inner).with_fallback_style(THEME);
     assert_eq!(
         msg.spans()[0].style.fg,
         Some(ColorValue::Palette(Color::Red))
@@ -32,7 +32,8 @@ fn fallback_style_child_wins_bg_inherits_formats_union() {
     assert!(msg.spans()[1].style.bold); // kept its own
     assert!(msg.spans()[1].style.underline); // inherited via union
 
-    let plain_fallback = "This is ".with_fallback_style(theme) + inner.with_fallback_style(theme);
+    let plain_fallback =
+        "This is ".with_fallback_style(THEME) + (&inner).with_fallback_style(THEME);
     assert_eq!(msg, plain_fallback);
 }
 
@@ -724,7 +725,11 @@ fn randomized_round_trip_and_wrap_invariants() {
         "word ",
         "👨\u{200d}👩\u{200d}👦",
         "é",
+        " \u{0301}",
         "line\r\nbreak",
+        "first\r",
+        "\nsecond",
+        "\u{02}raw\u{03}04",
         "superlongfragwithoutspaces",
     ];
 
@@ -785,10 +790,11 @@ fn randomized_round_trip_and_wrap_invariants() {
         };
 
         let wire = t.to_irc_string();
+        assert_eq!(t.wire_len(), wire.len());
         let reparsed = Text::parse(&wire);
         assert_eq!(
             reparsed,
-            t.clone().styled(normalize_wire),
+            (&t).styled(normalize_wire),
             "round-trip mismatch on case {}: wire={:?}",
             case,
             wire
@@ -798,6 +804,7 @@ fn randomized_round_trip_and_wrap_invariants() {
             for chunk in t.wrap(max_bytes) {
                 assert!(!chunk.is_empty());
                 let cw = chunk.to_irc_string();
+                assert_eq!(chunk.wire_len(), cw.len());
                 assert!(!cw.contains('\r') && !cw.contains('\n'));
                 // Only when a single grapheme + its own required setup/reset
                 // codes exceeds `max_bytes` is a 1-grapheme chunk allowed to
@@ -862,4 +869,50 @@ fn wrap_omits_empty_chunks() {
     // Spaces that actually fit within max_bytes remain a valid non-empty line.
     let fitting_spaces = Text::raw("   ").wrap(10);
     assert_eq!(fitting_spaces, vec![Text::raw("   ")]);
+}
+
+#[test]
+fn const_styles_borrowed_text_ops_tuple_rgb_and_iterators() {
+    use irc_colors::{Span, Style};
+
+    const BASE: Style = Style::new().italic().on_rgb(1, 2, 3);
+    const WARN: Style = Style::new()
+        .bold()
+        .underline()
+        .strikethrough()
+        .monospace()
+        .reverse()
+        .yellow()
+        .on_black()
+        .with_fallback(BASE);
+    const _: () = {
+        assert!(WARN.bold && WARN.italic && WARN.underline && WARN.strikethrough);
+        assert!(WARN.monospace && WARN.reverse);
+    };
+    assert_eq!(WARN.fg, Some(ColorValue::Palette(Color::Yellow)));
+    assert_eq!(WARN.bg, Some(ColorValue::Palette(Color::Black)));
+
+    const INHERITED_BG: Style = Style::new().rgb(10, 20, 30).with_fallback(BASE);
+    assert_eq!(INHERITED_BG.fg, Some(ColorValue::Rgb(10, 20, 30)));
+    assert_eq!(INHERITED_BG.bg, Some(ColorValue::Rgb(1, 2, 3)));
+
+    // Tuple `(u8, u8, u8)` converts into `ColorValue::Rgb` for `.fg()` / `.bg()`.
+    let tuple_colored = "rgb".fg((255, 105, 180)).bg((0, 0, 0));
+    assert_eq!(tuple_colored, "rgb".rgb(255, 105, 180).on_rgb(0, 0, 0));
+
+    // Borrowed `&Text` supports `Colorize`, `+`, `+=`, and `&IntoIterator` without `.clone()`.
+    let a = "Hello".red();
+    let b = " world".blue();
+    let mut combined = &a + &b;
+    combined += &"! ".bold();
+    let full = String::from(">> ") + &combined + "end";
+    assert_eq!(full.plain(), ">> Hello world! end");
+    assert_eq!((&a).bold(), "Hello".red().bold());
+
+    let borrowed_texts: Vec<&Span> = (&full).into_iter().collect();
+    assert_eq!(borrowed_texts, full.spans().iter().collect::<Vec<_>>());
+
+    let owned_spans = full.clone().into_spans();
+    let iter_spans: Vec<Span> = full.into_iter().collect();
+    assert_eq!(owned_spans, iter_spans);
 }

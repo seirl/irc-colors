@@ -154,6 +154,12 @@ impl From<Color> for ColorValue {
     }
 }
 
+impl From<(u8, u8, u8)> for ColorValue {
+    fn from((r, g, b): (u8, u8, u8)) -> Self {
+        ColorValue::Rgb(r, g, b)
+    }
+}
+
 impl ColorValue {
     /// This color's RGB `(r, g, b)` value, converting a palette [`Color`] via
     /// its canonical [`Color::to_rgb`] mapping if needed.
@@ -205,31 +211,40 @@ impl Span {
 }
 
 impl Style {
-    pub fn new() -> Self {
-        Style::default()
+    pub const fn new() -> Self {
+        Style {
+            fg: None,
+            bg: None,
+            bold: false,
+            italic: false,
+            underline: false,
+            strikethrough: false,
+            monospace: false,
+            reverse: false,
+        }
     }
 
-    pub fn bold(mut self) -> Self {
+    pub const fn bold(mut self) -> Self {
         self.bold = true;
         self
     }
-    pub fn italic(mut self) -> Self {
+    pub const fn italic(mut self) -> Self {
         self.italic = true;
         self
     }
-    pub fn underline(mut self) -> Self {
+    pub const fn underline(mut self) -> Self {
         self.underline = true;
         self
     }
-    pub fn strikethrough(mut self) -> Self {
+    pub const fn strikethrough(mut self) -> Self {
         self.strikethrough = true;
         self
     }
-    pub fn monospace(mut self) -> Self {
+    pub const fn monospace(mut self) -> Self {
         self.monospace = true;
         self
     }
-    pub fn reverse(mut self) -> Self {
+    pub const fn reverse(mut self) -> Self {
         self.reverse = true;
         self
     }
@@ -242,21 +257,40 @@ impl Style {
         self.bg = Some(c.into());
         self
     }
-    pub fn rgb(self, r: u8, g: u8, b: u8) -> Self {
-        self.fg(ColorValue::Rgb(r, g, b))
+    pub const fn rgb(mut self, r: u8, g: u8, b: u8) -> Self {
+        self.fg = Some(ColorValue::Rgb(r, g, b));
+        self
     }
     /// Set an RGB background color; pair with an explicit foreground color
     /// for maximum client compatibility (see [`ColorValue`]).
-    pub fn on_rgb(self, r: u8, g: u8, b: u8) -> Self {
-        self.bg(ColorValue::Rgb(r, g, b))
+    pub const fn on_rgb(mut self, r: u8, g: u8, b: u8) -> Self {
+        self.bg = Some(ColorValue::Rgb(r, g, b));
+        self
+    }
+
+    const fn palette_fg(mut self, c: Color) -> Self {
+        self.fg = Some(ColorValue::Palette(c));
+        self
+    }
+    const fn palette_bg(mut self, c: Color) -> Self {
+        self.bg = Some(ColorValue::Palette(c));
+        self
     }
 
     /// Returns a new style with `fallback` filling in any attributes not
     /// already set on `self`. Formatting toggles (bold, italic, etc.) are unioned.
-    pub fn with_fallback(self, fallback: Style) -> Self {
+    pub const fn with_fallback(self, fallback: Style) -> Self {
         Style {
-            fg: self.fg.or(fallback.fg),
-            bg: self.bg.or(fallback.bg),
+            fg: if self.fg.is_some() {
+                self.fg
+            } else {
+                fallback.fg
+            },
+            bg: if self.bg.is_some() {
+                self.bg
+            } else {
+                fallback.bg
+            },
             bold: self.bold | fallback.bold,
             italic: self.italic | fallback.italic,
             underline: self.underline | fallback.underline,
@@ -269,38 +303,38 @@ impl Style {
 
 #[rustfmt::skip]
 impl Style {
-    pub fn white(self) -> Self { self.fg(Color::White) }
-    pub fn on_white(self) -> Self { self.bg(Color::White) }
-    pub fn black(self) -> Self { self.fg(Color::Black) }
-    pub fn on_black(self) -> Self { self.bg(Color::Black) }
-    pub fn blue(self) -> Self { self.fg(Color::Blue) }
-    pub fn on_blue(self) -> Self { self.bg(Color::Blue) }
-    pub fn green(self) -> Self { self.fg(Color::Green) }
-    pub fn on_green(self) -> Self { self.bg(Color::Green) }
-    pub fn red(self) -> Self { self.fg(Color::Red) }
-    pub fn on_red(self) -> Self { self.bg(Color::Red) }
-    pub fn brown(self) -> Self { self.fg(Color::Brown) }
-    pub fn on_brown(self) -> Self { self.bg(Color::Brown) }
-    pub fn magenta(self) -> Self { self.fg(Color::Magenta) }
-    pub fn on_magenta(self) -> Self { self.bg(Color::Magenta) }
-    pub fn orange(self) -> Self { self.fg(Color::Orange) }
-    pub fn on_orange(self) -> Self { self.bg(Color::Orange) }
-    pub fn yellow(self) -> Self { self.fg(Color::Yellow) }
-    pub fn on_yellow(self) -> Self { self.bg(Color::Yellow) }
-    pub fn light_green(self) -> Self { self.fg(Color::LightGreen) }
-    pub fn on_light_green(self) -> Self { self.bg(Color::LightGreen) }
-    pub fn cyan(self) -> Self { self.fg(Color::Cyan) }
-    pub fn on_cyan(self) -> Self { self.bg(Color::Cyan) }
-    pub fn light_cyan(self) -> Self { self.fg(Color::LightCyan) }
-    pub fn on_light_cyan(self) -> Self { self.bg(Color::LightCyan) }
-    pub fn light_blue(self) -> Self { self.fg(Color::LightBlue) }
-    pub fn on_light_blue(self) -> Self { self.bg(Color::LightBlue) }
-    pub fn pink(self) -> Self { self.fg(Color::Pink) }
-    pub fn on_pink(self) -> Self { self.bg(Color::Pink) }
-    pub fn grey(self) -> Self { self.fg(Color::Grey) }
-    pub fn on_grey(self) -> Self { self.bg(Color::Grey) }
-    pub fn light_grey(self) -> Self { self.fg(Color::LightGrey) }
-    pub fn on_light_grey(self) -> Self { self.bg(Color::LightGrey) }
+    pub const fn white(self) -> Self { self.palette_fg(Color::White) }
+    pub const fn on_white(self) -> Self { self.palette_bg(Color::White) }
+    pub const fn black(self) -> Self { self.palette_fg(Color::Black) }
+    pub const fn on_black(self) -> Self { self.palette_bg(Color::Black) }
+    pub const fn blue(self) -> Self { self.palette_fg(Color::Blue) }
+    pub const fn on_blue(self) -> Self { self.palette_bg(Color::Blue) }
+    pub const fn green(self) -> Self { self.palette_fg(Color::Green) }
+    pub const fn on_green(self) -> Self { self.palette_bg(Color::Green) }
+    pub const fn red(self) -> Self { self.palette_fg(Color::Red) }
+    pub const fn on_red(self) -> Self { self.palette_bg(Color::Red) }
+    pub const fn brown(self) -> Self { self.palette_fg(Color::Brown) }
+    pub const fn on_brown(self) -> Self { self.palette_bg(Color::Brown) }
+    pub const fn magenta(self) -> Self { self.palette_fg(Color::Magenta) }
+    pub const fn on_magenta(self) -> Self { self.palette_bg(Color::Magenta) }
+    pub const fn orange(self) -> Self { self.palette_fg(Color::Orange) }
+    pub const fn on_orange(self) -> Self { self.palette_bg(Color::Orange) }
+    pub const fn yellow(self) -> Self { self.palette_fg(Color::Yellow) }
+    pub const fn on_yellow(self) -> Self { self.palette_bg(Color::Yellow) }
+    pub const fn light_green(self) -> Self { self.palette_fg(Color::LightGreen) }
+    pub const fn on_light_green(self) -> Self { self.palette_bg(Color::LightGreen) }
+    pub const fn cyan(self) -> Self { self.palette_fg(Color::Cyan) }
+    pub const fn on_cyan(self) -> Self { self.palette_bg(Color::Cyan) }
+    pub const fn light_cyan(self) -> Self { self.palette_fg(Color::LightCyan) }
+    pub const fn on_light_cyan(self) -> Self { self.palette_bg(Color::LightCyan) }
+    pub const fn light_blue(self) -> Self { self.palette_fg(Color::LightBlue) }
+    pub const fn on_light_blue(self) -> Self { self.palette_bg(Color::LightBlue) }
+    pub const fn pink(self) -> Self { self.palette_fg(Color::Pink) }
+    pub const fn on_pink(self) -> Self { self.palette_bg(Color::Pink) }
+    pub const fn grey(self) -> Self { self.palette_fg(Color::Grey) }
+    pub const fn on_grey(self) -> Self { self.palette_bg(Color::Grey) }
+    pub const fn light_grey(self) -> Self { self.palette_fg(Color::LightGrey) }
+    pub const fn on_light_grey(self) -> Self { self.palette_bg(Color::LightGrey) }
 }
 
 // ---------------------------------------------------------------------------
@@ -333,6 +367,11 @@ impl Text {
     /// The canonical sequence of non-empty, style-coalesced [`Span`]s.
     pub fn spans(&self) -> &[Span] {
         &self.spans
+    }
+
+    /// Consume this text and return its canonical sequence of [`Span`]s.
+    pub fn into_spans(self) -> Vec<Span> {
+        self.spans
     }
 
     /// Whether this text has no visible or whitespace content.
@@ -390,6 +429,14 @@ impl Text {
             .sum()
     }
 
+    /// Exact byte length this text will occupy on the wire when serialized
+    /// with [`Text::to_irc_string`], computed without allocating.
+    pub fn wire_len(&self) -> usize {
+        let mut w = WireLen(0);
+        let _ = self.write_irc(&mut w);
+        w.0
+    }
+
     /// Serialize to raw IRC-formatted bytes (as a `String`), resetting with
     /// `\x0f` and emitting the new span's codes whenever the style changes.
     /// This is what you send over the wire.
@@ -400,7 +447,7 @@ impl Text {
     /// pair is sent in the hex form, with the palette side converted via
     /// its canonical RGB value ([`Color::to_rgb`]) rather than dropped.
     pub fn to_irc_string(&self) -> String {
-        let mut out = String::new();
+        let mut out = String::with_capacity(self.wire_len());
         let _ = self.write_irc(&mut out);
         out
     }
@@ -433,6 +480,10 @@ impl Text {
     pub fn wrap(&self, max_bytes: usize) -> Vec<Text> {
         if self.is_empty() {
             return Vec::new();
+        }
+        if !self.spans.iter().any(|s| s.text.contains(['\r', '\n'])) && self.wire_len() <= max_bytes
+        {
+            return vec![self.clone()];
         }
 
         // Stream `(grapheme cluster, style)` pairs one `(spaces, word)` token
@@ -577,6 +628,30 @@ impl From<Span> for Text {
     }
 }
 
+impl From<&Text> for Text {
+    fn from(t: &Text) -> Self {
+        t.clone()
+    }
+}
+
+impl IntoIterator for Text {
+    type Item = Span;
+    type IntoIter = alloc::vec::IntoIter<Span>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.spans.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a Text {
+    type Item = &'a Span;
+    type IntoIter = core::slice::Iter<'a, Span>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.spans.iter()
+    }
+}
+
 impl<T: Into<Text>> Extend<T> for Text {
     fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
         for item in iter {
@@ -612,9 +687,26 @@ where
     }
 }
 
+impl<T> Add<T> for &Text
+where
+    Text: AddAssign<T>,
+{
+    type Output = Text;
+    fn add(self, rhs: T) -> Text {
+        self.clone() + rhs
+    }
+}
+
 impl Add<Text> for &str {
     type Output = Text;
     fn add(self, rhs: Text) -> Text {
+        Text::from(self) + rhs
+    }
+}
+
+impl Add<&Text> for &str {
+    type Output = Text;
+    fn add(self, rhs: &Text) -> Text {
         Text::from(self) + rhs
     }
 }
@@ -626,9 +718,23 @@ impl Add<Text> for &String {
     }
 }
 
+impl Add<&Text> for &String {
+    type Output = Text;
+    fn add(self, rhs: &Text) -> Text {
+        Text::from(self.as_str()) + rhs
+    }
+}
+
 impl Add<Text> for String {
     type Output = Text;
     fn add(self, rhs: Text) -> Text {
+        Text::raw(self) + rhs
+    }
+}
+
+impl Add<&Text> for String {
+    type Output = Text;
+    fn add(self, rhs: &Text) -> Text {
         Text::raw(self) + rhs
     }
 }
@@ -639,6 +745,14 @@ impl AddAssign<Text> for Text {
     fn add_assign(&mut self, rhs: Text) {
         for span in rhs.spans {
             self.push_clean_span(span);
+        }
+    }
+}
+
+impl AddAssign<&Text> for Text {
+    fn add_assign(&mut self, rhs: &Text) {
+        for span in &rhs.spans {
+            self.push_clean_str(&span.text, span.style);
         }
     }
 }
@@ -686,6 +800,8 @@ impl AddAssign<Span> for Text {
 /// ```
 #[rustfmt::skip]
 pub trait Colorize: Into<Text> + Sized {
+    /// Map every span's [`Style`] through `f`, coalescing adjacent spans whose
+    /// resulting styles match.
     fn styled(self, mut f: impl FnMut(Style) -> Style) -> Text {
         let mut text = self.into();
         for span in &mut text.spans {
