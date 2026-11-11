@@ -28,8 +28,15 @@
 //! # let _ = (warn, fancy);
 //! ```
 
-use std::fmt;
-use std::ops::{Add, AddAssign};
+#![no_std]
+
+extern crate alloc;
+
+use alloc::string::{String, ToString};
+use alloc::vec;
+use alloc::vec::Vec;
+use core::fmt;
+use core::ops::{Add, AddAssign};
 use unicode_segmentation::UnicodeSegmentation;
 
 // ---------------------------------------------------------------------------
