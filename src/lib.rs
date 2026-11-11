@@ -964,17 +964,22 @@ fn parse_irc(input: &str) -> Text {
 
     fn apply_color_pair<T>(
         style: &mut Style,
-        (fg, bg): (Option<T>, Option<T>),
+        pair: (Option<T>, Option<T>),
         to_color: impl Fn(T) -> Option<ColorValue>,
     ) {
-        if let Some(fg) = fg {
-            style.fg = to_color(fg);
-            if let Some(bg) = bg {
-                style.bg = to_color(bg);
+        match pair {
+            (None, None) => {
+                style.fg = None;
+                style.bg = None;
             }
-        } else {
-            style.fg = None;
-            style.bg = bg.and_then(to_color);
+            (fg, bg) => {
+                if let Some(fg) = fg {
+                    style.fg = to_color(fg);
+                }
+                if let Some(bg) = bg {
+                    style.bg = to_color(bg);
+                }
+            }
         }
     }
 

@@ -148,6 +148,33 @@ fn parse_supports_background_only_color_spec() {
         parsed.spans[0].style.bg,
         Some(ColorValue::Palette(Color::Red))
     );
+
+    // A bare `,bg` after an already-active foreground preserves that foreground,
+    // symmetrical with how a foreground-only spec preserves an active background.
+    let kept_fg = Text::parse("\u{03}02hi\u{03},04there");
+    assert_eq!(
+        kept_fg.spans[0].style.fg,
+        Some(ColorValue::Palette(Color::Blue))
+    );
+    assert_eq!(kept_fg.spans[0].style.bg, None);
+    assert_eq!(
+        kept_fg.spans[1].style.fg,
+        Some(ColorValue::Palette(Color::Blue))
+    );
+    assert_eq!(
+        kept_fg.spans[1].style.bg,
+        Some(ColorValue::Palette(Color::Red))
+    );
+
+    let kept_hex_fg = Text::parse("\u{04}0000FFhi\u{04},FF0000there");
+    assert_eq!(
+        kept_hex_fg.spans[1].style.fg,
+        Some(ColorValue::Rgb(0, 0, 255))
+    );
+    assert_eq!(
+        kept_hex_fg.spans[1].style.bg,
+        Some(ColorValue::Rgb(255, 0, 0))
+    );
 }
 
 #[test]
