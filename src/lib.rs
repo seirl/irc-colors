@@ -315,6 +315,19 @@ impl Text {
         }
     }
 
+    fn push_str(&mut self, text: &str, style: Style) {
+        if text.is_empty() {
+            return;
+        }
+        match self.spans.last_mut() {
+            Some(last) if last.style == style => last.text.push_str(text),
+            _ => self.spans.push(Span {
+                text: text.to_string(),
+                style,
+            }),
+        }
+    }
+
     fn push_span(&mut self, span: Span) {
         if span.text.is_empty() {
             return;
@@ -389,7 +402,7 @@ impl Text {
         }
 
         if cur != Style::default() {
-            out.push('\u{0f}');
+            out.push(CTRL_RESET);
         }
 
         out
@@ -468,17 +481,11 @@ impl Text {
     }
 
     fn from_units(units: &[(&str, Style)]) -> Text {
-        let mut spans: Vec<Span> = Vec::new();
-        for (g, style) in units {
-            match spans.last_mut() {
-                Some(last) if last.style == *style => last.text.push_str(g),
-                _ => spans.push(Span {
-                    text: g.to_string(),
-                    style: *style,
-                }),
-            }
+        let mut out = Text::new();
+        for &(g, style) in units {
+            out.push_str(g, style);
         }
-        Text { spans }
+        out
     }
 
     fn wrap_single_line(&self, max_bytes: usize) -> Vec<Text> {
@@ -764,35 +771,57 @@ pub trait Colorize: Into<Text> + Sized {
 impl<T: Into<Text>> Colorize for T {}
 
 // ---------------------------------------------------------------------------
-// Wire emission
+// IRC formatting control codes & wire emission
 // ---------------------------------------------------------------------------
+
+const CTRL_BOLD: char = '\x02';
+const CTRL_COLOR: char = '\x03';
+const CTRL_HEX_COLOR: char = '\x04';
+const CTRL_RESET: char = '\x0f';
+const CTRL_MONOSPACE: char = '\x11';
+const CTRL_REVERSE: char = '\x16';
+const CTRL_ITALIC: char = '\x1d';
+const CTRL_STRIKETHROUGH: char = '\x1e';
+const CTRL_UNDERLINE: char = '\x1f';
+
+const FORMAT_CHARS: &[char] = &[
+    CTRL_BOLD,
+    CTRL_COLOR,
+    CTRL_HEX_COLOR,
+    CTRL_RESET,
+    CTRL_MONOSPACE,
+    CTRL_REVERSE,
+    CTRL_ITALIC,
+    CTRL_STRIKETHROUGH,
+    CTRL_UNDERLINE,
+];
 
 /// Emit the formatting and color codes that establish `s` starting from
 /// [`Style::default()`], right before `first_char`.
 fn emit_style(out: &mut String, s: Style, first_char: char) {
     if s.bold {
-        out.push('\u{02}');
+        out.push(CTRL_BOLD);
     }
     if s.italic {
-        out.push('\u{1d}');
+        out.push(CTRL_ITALIC);
     }
     if s.underline {
-        out.push('\u{1f}');
+        out.push(CTRL_UNDERLINE);
     }
     if s.strikethrough {
-        out.push('\u{1e}');
+        out.push(CTRL_STRIKETHROUGH);
     }
     if s.monospace {
-        out.push('\u{11}');
+        out.push(CTRL_MONOSPACE);
     }
     if s.reverse {
-        out.push('\u{16}');
+        out.push(CTRL_REVERSE);
     }
 
     if s.fg.is_some() || s.bg.is_some() {
         use std::fmt::Write;
         if s.fg.is_some_and(ColorValue::is_rgb) || s.bg.is_some_and(ColorValue::is_rgb) {
-            out.push('\u{04}');
+            out.push(CTRL_HEX_COLOR);
             if let Some(fg) = s.fg {
                 let (r, g, b) = fg.as_rgb();
                 let _ = write!(out, "{:02X}{:02X}{:02X}", r, g, b);
@@ -802,7 +831,7 @@ fn emit_style(out: &mut String, s: Style, first_char: char) {
                 let _ = write!(out, ",{:02X}{:02X}{:02X}", r, g, b);
             }
         } else {
-            out.push('\u{03}');
+            out.push(CTRL_COLOR);
             // `99` is the codified IRC default/transparent color code,
             // used so `<FG>` is never omitted before `,<BG>` on the wire.
             let fg = match s.fg {
@@ -819,7 +848,8 @@ fn emit_style(out: &mut String, s: Style, first_char: char) {
         // A foreground-only color followed by `,` could have `,` + digits
         // eaten as a background color; nudge apart with an empty bold pair.
         if s.bg.is_none() && first_char == ',' {
-            out.push_str("\u{02}\u{02}");
+            out.push(CTRL_BOLD);
+            out.push(CTRL_BOLD);
         }
     }
 }
@@ -830,7 +860,7 @@ fn push_styled(out: &mut String, cur: &mut Style, text: &str, style: Style) {
     };
     if style != *cur {
         if *cur != Style::default() {
-            out.push('\u{0f}');
+            out.push(CTRL_RESET);
         }
         emit_style(out, style, first);
         *cur = style;
@@ -893,17 +923,7 @@ impl<'a> LineBuf<'a> {
 fn parse_irc(input: &str) -> Text {
     let mut out = Text::new();
     let mut style = Style::default();
-    let mut buf = String::new();
     let mut s = input;
-
-    fn flush(buf: &mut String, out: &mut Text, style: Style) {
-        if !buf.is_empty() {
-            out.push_span(Span {
-                text: std::mem::take(buf),
-                style,
-            });
-        }
-    }
 
     // Reads up to `max_digits` ASCII digits from the start of `s`.
     fn read_digits(s: &mut &str, max_digits: usize) -> Option<u8> {
@@ -970,39 +990,32 @@ fn parse_irc(input: &str) -> Text {
         }
     }
 
-    while let Some(c) = s.chars().next() {
-        s = &s[c.len_utf8()..];
+    while let Some(pos) = s.find(FORMAT_CHARS) {
+        out.push_str(&s[..pos], style);
+        let c = s.as_bytes()[pos] as char;
+        s = &s[pos + 1..];
         match c {
-            '\u{02}' | '\u{1d}' | '\u{1f}' | '\u{1e}' | '\u{11}' | '\u{16}' | '\u{0f}'
-            | '\u{03}' | '\u{04}' => {
-                flush(&mut buf, &mut out, style);
-                match c {
-                    '\u{02}' => style.bold = !style.bold,
-                    '\u{1d}' => style.italic = !style.italic,
-                    '\u{1f}' => style.underline = !style.underline,
-                    '\u{1e}' => style.strikethrough = !style.strikethrough,
-                    '\u{11}' => style.monospace = !style.monospace,
-                    '\u{16}' => style.reverse = !style.reverse,
-                    '\u{0f}' => style = Style::default(),
-                    '\u{03}' => {
-                        let pair = read_color_pair(&mut s, |s| read_digits(s, 2));
-                        apply_color_pair(&mut style, pair, |c| {
-                            Color::from_code(c).map(ColorValue::Palette)
-                        });
-                    }
-                    '\u{04}' => {
-                        let pair = read_color_pair(&mut s, read_hex6);
-                        apply_color_pair(&mut style, pair, |(r, g, b)| {
-                            Some(ColorValue::Rgb(r, g, b))
-                        });
-                    }
-                    _ => unreachable!(),
-                }
+            CTRL_BOLD => style.bold = !style.bold,
+            CTRL_ITALIC => style.italic = !style.italic,
+            CTRL_UNDERLINE => style.underline = !style.underline,
+            CTRL_STRIKETHROUGH => style.strikethrough = !style.strikethrough,
+            CTRL_MONOSPACE => style.monospace = !style.monospace,
+            CTRL_REVERSE => style.reverse = !style.reverse,
+            CTRL_RESET => style = Style::default(),
+            CTRL_COLOR => {
+                let pair = read_color_pair(&mut s, |s| read_digits(s, 2));
+                apply_color_pair(&mut style, pair, |c| {
+                    Color::from_code(c).map(ColorValue::Palette)
+                });
             }
-            _ => buf.push(c),
+            CTRL_HEX_COLOR => {
+                let pair = read_color_pair(&mut s, read_hex6);
+                apply_color_pair(&mut style, pair, |(r, g, b)| Some(ColorValue::Rgb(r, g, b)));
+            }
+            _ => unreachable!(),
         }
     }
-    flush(&mut buf, &mut out, style);
+    out.push_str(s, style);
 
     out
 }
