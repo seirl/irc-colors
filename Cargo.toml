@@ -2,6 +2,7 @@
 name = "irc-color"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 description = "Ergonomic IRC text formatting, colors, parsing, and byte-accurate message wrapping"
 repository = "https://github.com/seirl/irc-colors"
 readme = "README.md"

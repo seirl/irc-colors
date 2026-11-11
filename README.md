@@ -33,3 +33,8 @@ for chunk in line.wrap(400) {
 - **Byte-accurate `Text::wrap(max_bytes)`**: accounts for control/reset code overhead on the wire, breaks cleanly on whitespace and `\r\n`/`\n`/`\r`, and falls back to Unicode grapheme-cluster splits for overlong words without tearing multi-codepoint emoji or accents.
 - **Round-trip `Text::parse`**: parses incoming IRC-formatted strings back into canonical `Text`.
 - **`#![no_std]` compatible** (requires `alloc`).
+
+## License
+
+Licensed under the [MIT License](LICENSE).
+
