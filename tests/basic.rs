@@ -420,6 +420,27 @@ fn wrap_consumes_break_point_whitespace_and_preserves_words() {
     assert_eq!(preserved.len(), 1);
     assert_eq!(preserved[0].plain(), "  col1   col2");
 
+    // Leading spaces that push the first word past `max_bytes` are consumed
+    // rather than tearing a fitting word in half or emitting a space-only line.
+    let lead1: Vec<String> = Text::raw("    hello")
+        .wrap(7)
+        .iter()
+        .map(|c| c.plain())
+        .collect();
+    assert_eq!(lead1, vec!["hello"]);
+
+    let lead2: Vec<String> = Text::raw("  a").wrap(2).iter().map(|c| c.plain()).collect();
+    assert_eq!(lead2, vec!["a"]);
+
+    let all_spaces = Text::raw("      ").wrap(4);
+    assert_eq!(all_spaces, vec![Text::new()]);
+
+    // Multi-span words stay glued together across wraps instead of splitting at span boundaries.
+    let multi_span = "prefix " + "hel".red() + "lo".blue();
+    let ms_chunks = multi_span.wrap(16);
+    let ms_plains: Vec<String> = ms_chunks.iter().map(|c| c.plain()).collect();
+    assert_eq!(ms_plains, vec!["prefix", "hello"]);
+
     // Sweep every max_bytes alignment (5..=40) across plain and styled text:
     // whenever max_bytes can fit each individual word, joining chunk.plain()
     // with " " reproduces the sentence with no trailing spaces on any chunk.

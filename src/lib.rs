@@ -520,19 +520,15 @@ impl Text {
 
             if !line.units.is_empty() {
                 lines.push(line.take_line());
-                if word_start == i || line.try_push(&units[word_start..i], max_bytes) {
-                    continue;
-                }
             }
 
-            // Remaining slice (`word` after a wrap, or `[leading_spaces..., word]`
-            // on an empty first line) exceeds `max_bytes` alone: hard-split by grapheme.
-            let rest = if lines.is_empty() {
-                &units[ws_start..i]
-            } else {
-                &units[word_start..i]
-            };
-            for &(g, style) in rest {
+            let word = &units[word_start..i];
+            if word.is_empty() || line.try_push(word, max_bytes) {
+                continue;
+            }
+
+            // Single word alone exceeds `max_bytes`: hard-split by grapheme.
+            for &(g, style) in word {
                 if !line.try_push(&[(g, style)], max_bytes) {
                     if !line.units.is_empty() {
                         lines.push(line.take_line());
