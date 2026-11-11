@@ -225,13 +225,21 @@ fn background_is_cleared_when_next_span_has_foreground_only() {
     let rendered = msg.to_irc_string();
     let reparsed = Text::parse(&rendered);
 
-    assert_eq!(reparsed.spans[0].style.fg, Some(ColorValue::Palette(Color::Red)));
-    assert_eq!(reparsed.spans[0].style.bg, Some(ColorValue::Palette(Color::Blue)));
-
-    assert_eq!(reparsed.spans[1].style.fg, Some(ColorValue::Palette(Color::Green)));
     assert_eq!(
-        reparsed.spans[1].style.bg,
-        None,
+        reparsed.spans[0].style.fg,
+        Some(ColorValue::Palette(Color::Red))
+    );
+    assert_eq!(
+        reparsed.spans[0].style.bg,
+        Some(ColorValue::Palette(Color::Blue))
+    );
+
+    assert_eq!(
+        reparsed.spans[1].style.fg,
+        Some(ColorValue::Palette(Color::Green))
+    );
+    assert_eq!(
+        reparsed.spans[1].style.bg, None,
         "background color should have been cleared, but was: {:?}",
         reparsed.spans[1].style.bg
     );
@@ -243,7 +251,10 @@ fn parse_does_not_swallow_comma_digit_after_foreground_color() {
     let rendered = msg.to_irc_string();
     let reparsed = Text::parse(&rendered);
     assert_eq!(reparsed.plain(), ",50 USD");
-    assert_eq!(reparsed.spans[0].style.fg, Some(ColorValue::Palette(Color::Red)));
+    assert_eq!(
+        reparsed.spans[0].style.fg,
+        Some(ColorValue::Palette(Color::Red))
+    );
     assert_eq!(reparsed.spans[0].style.bg, None);
 }
 
@@ -260,6 +271,8 @@ fn hex_background_only_round_trip() {
 #[test]
 fn string_add_text() {
     let s = String::from("Hello, ");
+    let borrowed = (&s).bold();
+    assert_eq!(borrowed.plain(), "Hello, ");
     let styled = s + "world".bold().red();
     assert_eq!(styled.plain(), "Hello, world");
     assert!(styled.spans[1].style.bold);
@@ -319,10 +332,16 @@ fn foreground_to_background_only_clears_foreground() {
     let rendered = msg.to_irc_string();
 
     let reparsed = Text::parse(&rendered);
-    assert_eq!(reparsed.spans[0].style.fg, Some(ColorValue::Palette(Color::Red)));
+    assert_eq!(
+        reparsed.spans[0].style.fg,
+        Some(ColorValue::Palette(Color::Red))
+    );
     assert_eq!(reparsed.spans[0].style.bg, None);
     assert_eq!(reparsed.spans[1].style.fg, None);
-    assert_eq!(reparsed.spans[1].style.bg, Some(ColorValue::Palette(Color::Blue)));
+    assert_eq!(
+        reparsed.spans[1].style.bg,
+        Some(ColorValue::Palette(Color::Blue))
+    );
 }
 
 #[test]
@@ -387,7 +406,11 @@ fn wrap_preserves_word_separation_when_words_hit_exact_max_bytes() {
     for max in 11..=45 {
         let styled_chunks = styled.wrap(max);
         let styled_rejoined: String = styled_chunks.iter().map(|c| c.plain()).collect();
-        assert_eq!(styled_rejoined, sentence, "lost space (styled) at max_bytes={}", max);
+        assert_eq!(
+            styled_rejoined, sentence,
+            "lost space (styled) at max_bytes={}",
+            max
+        );
         for c in &styled_chunks {
             assert!(c.to_irc_string().len() <= max);
         }
@@ -467,7 +490,11 @@ fn empty_spans_do_not_break_digit_disambiguation() {
 fn style_transitions_reset_with_x0f() {
     let to_plain = "fancy".bold().italic().underline().strikethrough().red() + "123";
     let rendered = to_plain.to_irc_string();
-    assert!(rendered.ends_with("\u{0f}123"), "rendered was {:?}", rendered);
+    assert!(
+        rendered.ends_with("\u{0f}123"),
+        "rendered was {:?}",
+        rendered
+    );
     assert_eq!(Text::parse(&rendered), to_plain);
 
     let overlap = "a".bold().red() + "b".bold().blue();
@@ -498,8 +525,14 @@ fn parse_stateful_toggles_and_inherited_background() {
     // Foreground-only `\x03<fg>` / `\x04<hex>` preserves an active background,
     // while bare `\x03` / `\x04` clears both colors without clearing bold.
     let inherited_pal = Text::parse("\u{02}\u{03}04,02a\u{03}03b\u{03}c");
-    assert_eq!(inherited_pal.spans[0].style, Style::new().bold().red().on_blue());
-    assert_eq!(inherited_pal.spans[1].style, Style::new().bold().green().on_blue());
+    assert_eq!(
+        inherited_pal.spans[0].style,
+        Style::new().bold().red().on_blue()
+    );
+    assert_eq!(
+        inherited_pal.spans[1].style,
+        Style::new().bold().green().on_blue()
+    );
     assert_eq!(inherited_pal.spans[2].style, Style::new().bold());
 
     let inherited_hex = Text::parse("\u{04}FF0000,0000FFa\u{04}00FF00b\u{04}c");

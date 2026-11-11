@@ -243,6 +243,24 @@ impl Style {
         self.bg(ColorValue::Rgb(r, g, b))
     }
 
+    /// Returns a new style with `fallback` filling in any attributes not
+    /// already set on `self`. Formatting toggles (bold, italic, etc.) are unioned.
+    pub fn with_fallback(self, fallback: Style) -> Self {
+        Style {
+            fg: self.fg.or(fallback.fg),
+            bg: self.bg.or(fallback.bg),
+            bold: self.bold | fallback.bold,
+            italic: self.italic | fallback.italic,
+            underline: self.underline | fallback.underline,
+            strikethrough: self.strikethrough | fallback.strikethrough,
+            monospace: self.monospace | fallback.monospace,
+            reverse: self.reverse | fallback.reverse,
+        }
+    }
+}
+
+#[rustfmt::skip]
+impl Style {
     pub fn white(self) -> Self { self.fg(Color::White) }
     pub fn on_white(self) -> Self { self.bg(Color::White) }
     pub fn black(self) -> Self { self.fg(Color::Black) }
@@ -275,21 +293,6 @@ impl Style {
     pub fn on_grey(self) -> Self { self.bg(Color::Grey) }
     pub fn light_grey(self) -> Self { self.fg(Color::LightGrey) }
     pub fn on_light_grey(self) -> Self { self.bg(Color::LightGrey) }
-
-    /// Returns a new style with `fallback` filling in any attributes not
-    /// already set on `self`. Formatting toggles (bold, italic, etc.) are unioned.
-    pub fn with_fallback(self, fallback: Style) -> Self {
-        Style {
-            fg: self.fg.or(fallback.fg),
-            bg: self.bg.or(fallback.bg),
-            bold: self.bold | fallback.bold,
-            italic: self.italic | fallback.italic,
-            underline: self.underline | fallback.underline,
-            strikethrough: self.strikethrough | fallback.strikethrough,
-            monospace: self.monospace | fallback.monospace,
-            reverse: self.reverse | fallback.reverse,
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -544,6 +547,12 @@ impl From<&str> for Text {
     }
 }
 
+impl From<&String> for Text {
+    fn from(s: &String) -> Self {
+        Text::raw(s.as_str())
+    }
+}
+
 impl From<String> for Text {
     fn from(s: String) -> Self {
         Text::raw(s)
@@ -632,7 +641,6 @@ impl AddAssign<String> for Text {
 // Colorize — the fun, chainable builder, `colored`/`owo-colors`-style
 // ---------------------------------------------------------------------------
 
-
 /// Chainable styling for anything that can become [`Text`]: `&str`,
 /// `String`, or an existing `Text`. Calling a method twice (e.g. `.bold()`
 /// then later `.red()`) just fills in more attributes — later calls in a
@@ -646,6 +654,7 @@ impl AddAssign<String> for Text {
 /// let c = a + " " + b;
 /// # let _ = c;
 /// ```
+#[rustfmt::skip]
 pub trait Colorize: Into<Text> + Sized {
     fn styled(self, f: impl Fn(Style) -> Style) -> Text {
         let mut out = Text::new();
