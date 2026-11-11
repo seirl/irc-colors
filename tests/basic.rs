@@ -112,6 +112,13 @@ fn palette_and_hex_are_distinct_kinds() {
     let palette = "x".red();
     let hex = "x".rgb(255, 0, 0);
     assert_ne!(palette.spans[0].style.fg, hex.spans[0].style.fg);
+
+    for code in 0..=15u8 {
+        let color = Color::from_code(code).expect("0..=15 must map to a Color");
+        assert_eq!(color.code(), code);
+    }
+    assert_eq!(Color::from_code(16), None);
+    assert_eq!(Color::from_code(99), None);
 }
 
 #[test]

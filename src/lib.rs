@@ -42,70 +42,57 @@ use unicode_segmentation::UnicodeSegmentation;
 /// Note codes 6, 10, and 11 are worth calling out: some older documentation
 /// (and mIRC itself) names them Purple/Teal/Cyan respectively, but the
 /// codified naming is Magenta/Cyan/Light Cyan, which is what's used here.
+#[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Color {
-    White,
-    Black,
-    Blue,
-    Green,
-    Red,
-    Brown,
-    Magenta,
-    Orange,
-    Yellow,
-    LightGreen,
-    Cyan,
-    LightCyan,
-    LightBlue,
-    Pink,
-    Grey,
-    LightGrey,
+    White = 0,
+    Black = 1,
+    Blue = 2,
+    Green = 3,
+    Red = 4,
+    Brown = 5,
+    Magenta = 6,
+    Orange = 7,
+    Yellow = 8,
+    LightGreen = 9,
+    Cyan = 10,
+    LightCyan = 11,
+    LightBlue = 12,
+    Pink = 13,
+    Grey = 14,
+    LightGrey = 15,
 }
 
 impl Color {
+    const ALL: [Color; 16] = [
+        Color::White,
+        Color::Black,
+        Color::Blue,
+        Color::Green,
+        Color::Red,
+        Color::Brown,
+        Color::Magenta,
+        Color::Orange,
+        Color::Yellow,
+        Color::LightGreen,
+        Color::Cyan,
+        Color::LightCyan,
+        Color::LightBlue,
+        Color::Pink,
+        Color::Grey,
+        Color::LightGrey,
+    ];
+
     pub const fn code(self) -> u8 {
-        use Color::*;
-        match self {
-            White => 0,
-            Black => 1,
-            Blue => 2,
-            Green => 3,
-            Red => 4,
-            Brown => 5,
-            Magenta => 6,
-            Orange => 7,
-            Yellow => 8,
-            LightGreen => 9,
-            Cyan => 10,
-            LightCyan => 11,
-            LightBlue => 12,
-            Pink => 13,
-            Grey => 14,
-            LightGrey => 15,
-        }
+        self as u8
     }
 
     pub const fn from_code(code: u8) -> Option<Color> {
-        use Color::*;
-        Some(match code {
-            0 => White,
-            1 => Black,
-            2 => Blue,
-            3 => Green,
-            4 => Red,
-            5 => Brown,
-            6 => Magenta,
-            7 => Orange,
-            8 => Yellow,
-            9 => LightGreen,
-            10 => Cyan,
-            11 => LightCyan,
-            12 => LightBlue,
-            13 => Pink,
-            14 => Grey,
-            15 => LightGrey,
-            _ => return None,
-        })
+        if (code as usize) < Self::ALL.len() {
+            Some(Self::ALL[code as usize])
+        } else {
+            None
+        }
     }
 
     /// The canonical RGB value for this palette color, per mIRC's own
