@@ -409,12 +409,12 @@ impl Text {
     }
 
     /// Split into a list of `Text`s, each of which will render to at most
-    /// `max_bytes` bytes on the wire, breaking on whitespace and never
-    /// splitting a word in half (unless a single word alone exceeds
-    /// `max_bytes`, in which case it's hard-split at a grapheme-cluster
-    /// boundary — so a multi-codepoint character like an emoji or an
-    /// accented letter is never torn apart). Explicit `\n`s, `\r\n`s, and
-    /// `\r`s always force a break.
+    /// `max_bytes` bytes on the wire, breaking on whitespace (consuming the
+    /// break-point spaces) and never splitting a word in half (unless a
+    /// single word alone exceeds `max_bytes`, in which case it's hard-split
+    /// at a grapheme-cluster boundary — so a multi-codepoint character like
+    /// an emoji or an accented letter is never torn apart). Explicit `\n`s,
+    /// `\r\n`s, and `\r`s always force a break.
     ///
     /// Because every [`Span`] carries its full resolved style (see above),
     /// each returned chunk re-serializes its own leading codes from
@@ -502,25 +502,40 @@ impl Text {
 
         let mut lines = Vec::new();
         let mut line = LineBuf::default();
+        let mut i = 0;
 
-        for word in units.split_inclusive(|&(g, _)| g == " ") {
-            if line.try_push(word, max_bytes) {
+        while i < units.len() {
+            let ws_start = i;
+            while i < units.len() && units[i].0 == " " {
+                i += 1;
+            }
+            let word_start = i;
+            while i < units.len() && units[i].0 != " " {
+                i += 1;
+            }
+
+            if line.try_push(&units[ws_start..i], max_bytes) {
                 continue;
             }
+
             if !line.units.is_empty() {
                 lines.push(line.take_line());
-                if line.try_push(word, max_bytes) {
+                if word_start == i || line.try_push(&units[word_start..i], max_bytes) {
                     continue;
                 }
             }
-            // Word alone exceeds `max_bytes`: hard-split grapheme-by-grapheme.
-            for &(g, style) in word {
+
+            // Remaining slice (`word` after a wrap, or `[leading_spaces..., word]`
+            // on an empty first line) exceeds `max_bytes` alone: hard-split by grapheme.
+            let rest = if lines.is_empty() {
+                &units[ws_start..i]
+            } else {
+                &units[word_start..i]
+            };
+            for &(g, style) in rest {
                 if !line.try_push(&[(g, style)], max_bytes) {
                     if !line.units.is_empty() {
                         lines.push(line.take_line());
-                        if g == " " {
-                            continue;
-                        }
                     }
                     line.push_unchecked(g, style);
                 }

@@ -47,8 +47,19 @@ fn wrap_respects_max_bytes_and_preserves_words() {
         );
     }
 
-    // no words lost or mangled
-    let rejoined: String = chunks.iter().map(|c| c.plain()).collect();
+    // no words lost or mangled, and wrapped lines carry no trailing break-point space
+    for c in &chunks[..chunks.len() - 1] {
+        assert!(
+            !c.plain().ends_with(' '),
+            "trailing space in {:?}",
+            c.plain()
+        );
+    }
+    let rejoined = chunks
+        .iter()
+        .map(|c| c.plain())
+        .collect::<Vec<_>>()
+        .join(" ");
     assert_eq!(
         rejoined.split_whitespace().collect::<Vec<_>>(),
         long.split_whitespace().collect::<Vec<_>>()
@@ -377,43 +388,75 @@ fn wrap_hard_split_packs_remainder_with_following_short_word() {
 }
 
 #[test]
-fn wrap_preserves_word_separation_when_words_hit_exact_max_bytes() {
-    // Regression test for the previous `pending_ws` implementation:
-    // "the quick" without its trailing space is 9 bytes. At max_bytes=9,
-    // dropping that space produced ["the quick", "brown"] -> rejoined "the quickbrown"!
+fn wrap_consumes_break_point_whitespace_and_preserves_words() {
+    // "the quick" is 9 bytes; at max_bytes=9 the break-point space before
+    // "brown" is consumed so "the quick" fits on line 1 without trailing space.
     let exact = Text::raw("the quick brown");
     let chunks = exact.wrap(9);
-    let rejoined: String = chunks.iter().map(|c| c.plain()).collect();
-    assert_eq!(rejoined, "the quick brown");
+    let plains: Vec<String> = chunks.iter().map(|c| c.plain()).collect();
+    assert_eq!(plains, vec!["the quick", "brown"]);
     for c in &chunks {
         assert!(c.to_irc_string().len() <= 9);
     }
 
-    // Sweep every max_bytes alignment (6..=40) across plain and styled text:
-    // whenever max_bytes can fit each individual word + space, concatenating
-    // chunk.plain() must reproduce the original string verbatim (no lost spaces).
+    // Width consistency: "hello world" wraps to ["hello", "world"] at both 5 and 6.
+    for max in [5, 6] {
+        let hw: Vec<String> = Text::raw("hello world")
+            .wrap(max)
+            .iter()
+            .map(|c| c.plain())
+            .collect();
+        assert_eq!(hw, vec!["hello", "world"]);
+    }
+
+    // Styled backgrounds/underlines don't leave a dangling styled space cell at line end.
+    let bg_chunks = "hello world".underline().on_red().wrap(15);
+    assert_eq!(bg_chunks.len(), 2);
+    assert_eq!(bg_chunks[0].to_irc_string(), "\u{1f}\u{03}99,04hello\u{0f}");
+    assert_eq!(bg_chunks[1].to_irc_string(), "\u{1f}\u{03}99,04world\u{0f}");
+
+    // Interior multiple spaces and leading spaces stay intact when not broken across lines.
+    let preserved = Text::raw("  col1   col2").wrap(40);
+    assert_eq!(preserved.len(), 1);
+    assert_eq!(preserved[0].plain(), "  col1   col2");
+
+    // Sweep every max_bytes alignment (5..=40) across plain and styled text:
+    // whenever max_bytes can fit each individual word, joining chunk.plain()
+    // with " " reproduces the sentence with no trailing spaces on any chunk.
     let sentence = "the quick brown fox jumps over the lazy dog";
-    for max in 6..=40 {
+    for max in 5..=40 {
         let plain_chunks = Text::raw(sentence).wrap(max);
-        let plain_rejoined: String = plain_chunks.iter().map(|c| c.plain()).collect();
-        assert_eq!(plain_rejoined, sentence, "lost space at max_bytes={}", max);
         for c in &plain_chunks {
             assert!(c.to_irc_string().len() <= max);
+            assert!(!c.plain().ends_with(' '));
+            assert!(!c.plain().starts_with(' '));
         }
+        let plain_rejoined = plain_chunks
+            .iter()
+            .map(|c| c.plain())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert_eq!(plain_rejoined, sentence, "mismatch at max_bytes={}", max);
     }
-    // Styled: longest word ("quick " / "brown " / "jumps ") + bold(1) + red(3) + reset(1) = 11 bytes.
+    // Styled: longest word ("quick" / "brown" / "jumps") + bold(1) + red(3) + reset(1) = 10 bytes.
     let styled = sentence.bold().red();
-    for max in 11..=45 {
+    for max in 10..=45 {
         let styled_chunks = styled.wrap(max);
-        let styled_rejoined: String = styled_chunks.iter().map(|c| c.plain()).collect();
-        assert_eq!(
-            styled_rejoined, sentence,
-            "lost space (styled) at max_bytes={}",
-            max
-        );
         for c in &styled_chunks {
             assert!(c.to_irc_string().len() <= max);
+            assert!(!c.plain().ends_with(' '));
+            assert!(!c.plain().starts_with(' '));
         }
+        let styled_rejoined = styled_chunks
+            .iter()
+            .map(|c| c.plain())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert_eq!(
+            styled_rejoined, sentence,
+            "mismatch (styled) at max_bytes={}",
+            max
+        );
     }
 }
 
