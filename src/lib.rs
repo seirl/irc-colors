@@ -133,8 +133,14 @@ impl Color {
 /// Either a palette [`Color`] (the classic 16-color set, sent with the
 /// `\x03` code) or a 24-bit RGB value (sent with the newer `\x04` hex-color
 /// code from [IRC Formatting](https://modern.ircdocs.horse/formatting#hex-color)).
-/// Support for the hex form varies by client, but it's fine to send —
-/// clients that don't understand it are specified to parse past it safely.
+///
+/// Support for `\x04` varies by client; standard `\x04RRGGBB` and
+/// `\x04RRGGBB,RRGGBB` sequences are specified so clients that don't render
+/// them still parse past them safely. However, the `\x04` specification has
+/// no default-foreground placeholder (unlike `\x0399,<BG>`), so an RGB
+/// background without a foreground emits non-standard `\x04,RRGGBB` — pair
+/// [`Colorize::on_rgb`] with an explicit foreground color for broad client
+/// compatibility.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ColorValue {
     Palette(Color),
@@ -242,6 +248,8 @@ impl Style {
     pub fn rgb(self, r: u8, g: u8, b: u8) -> Self {
         self.fg(ColorValue::Rgb(r, g, b))
     }
+    /// Set an RGB background color; pair with an explicit foreground color
+    /// for maximum client compatibility (see [`ColorValue`]).
     pub fn on_rgb(self, r: u8, g: u8, b: u8) -> Self {
         self.bg(ColorValue::Rgb(r, g, b))
     }
@@ -426,6 +434,13 @@ impl Text {
     /// [`Colorize`] chain), both are still rendered correctly: the whole
     /// pair is sent in the hex form, with the palette side converted via
     /// its canonical RGB value ([`Color::to_rgb`]) rather than dropped.
+    pub fn to_irc_string(&self) -> String {
+        let approx_cap: usize = self.spans.iter().map(|s| s.text.len() + 4).sum();
+        let mut out = String::with_capacity(approx_cap);
+        let _ = self.write_irc(&mut out);
+        out
+    }
+
     fn write_irc(&self, out: &mut impl fmt::Write) -> fmt::Result {
         let mut cur = Style::default();
         for span in &self.spans {
@@ -435,13 +450,6 @@ impl Text {
             out.write_char(CTRL_RESET)?;
         }
         Ok(())
-    }
-
-    pub fn to_irc_string(&self) -> String {
-        let approx_cap: usize = self.spans.iter().map(|s| s.text.len() + 4).sum();
-        let mut out = String::with_capacity(approx_cap);
-        let _ = self.write_irc(&mut out);
-        out
     }
 
     fn has_line_breaks(&self) -> bool {
