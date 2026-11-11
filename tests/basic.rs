@@ -32,8 +32,8 @@ fn fallback_style_child_wins_bg_inherits_formats_union() {
     assert!(msg.spans()[1].style.bold); // kept its own
     assert!(msg.spans()[1].style.underline); // inherited via union
 
-    let msg2 = Text::with_fallback(theme, "This is " + inner);
-    assert_eq!(msg, msg2);
+    let plain_fallback = "This is ".with_fallback_style(theme) + inner.with_fallback_style(theme);
+    assert_eq!(msg, plain_fallback);
 }
 
 #[test]
@@ -328,9 +328,15 @@ fn string_add_text() {
     let s = String::from("Hello, ");
     let borrowed = (&s).bold();
     assert_eq!(borrowed.plain(), "Hello, ");
-    let styled = s + "world".bold().red();
-    assert_eq!(styled.plain(), "Hello, world");
-    assert!(styled.spans()[1].style.bold);
+
+    let ref_lhs = &s + "world".bold().red();
+    assert_eq!(ref_lhs.plain(), "Hello, world");
+
+    let suffix = String::from("!");
+    let mut full = s + "world".bold().red() + &suffix;
+    full += &suffix;
+    assert_eq!(full.plain(), "Hello, world!!");
+    assert!(full.spans()[1].style.bold);
 }
 
 #[test]
@@ -658,7 +664,7 @@ fn reverse_round_trip() {
     assert_eq!(Text::parse(&direct.to_irc_string()), direct);
 
     let warn = Style::new().bold().reverse().grey().on_light_grey();
-    let msg = Text::with_fallback(warn, "inverted");
+    let msg = "inverted".with_style(warn);
     let wire = msg.to_irc_string();
     assert!(wire.contains('\u{16}'));
 

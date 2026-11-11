@@ -407,17 +407,7 @@ impl Text {
     /// # let _ = msg;
     /// ```
     pub fn with_fallback_style(self, fallback: Style) -> Text {
-        let mut out = Text::new();
-        for mut span in self.spans {
-            span.style = span.style.with_fallback(fallback);
-            out.push_clean_span(span);
-        }
-        out
-    }
-
-    /// Static constructor: combine several already-styled pieces under one fallback style.
-    pub fn with_fallback(fallback: Style, inner: impl Into<Text>) -> Text {
-        inner.into().with_fallback_style(fallback)
+        self.styled(|s| s.with_fallback(fallback))
     }
 
     /// Serialize to raw IRC-formatted bytes (as a `String`), resetting with
@@ -425,7 +415,7 @@ impl Text {
     /// This is what you send over the wire.
     ///
     /// If a span's `fg`/`bg` mix a palette [`Color`] with an RGB value (only
-    /// possible via [`Text::with_fallback`] composition, not the ordinary
+    /// possible via [`Text::with_fallback_style`] composition, not the ordinary
     /// [`Colorize`] chain), both are still rendered correctly: the whole
     /// pair is sent in the hex form, with the palette side converted via
     /// its canonical RGB value ([`Color::to_rgb`]) rather than dropped.
@@ -633,25 +623,12 @@ impl fmt::Display for Text {
 
 // -- concatenation, so plain strings and Texts mix freely -------------------
 
-impl Add<Text> for Text {
+impl<T> Add<T> for Text
+where
+    Text: AddAssign<T>,
+{
     type Output = Text;
-    fn add(mut self, rhs: Text) -> Text {
-        self += rhs;
-        self
-    }
-}
-
-impl Add<&str> for Text {
-    type Output = Text;
-    fn add(mut self, rhs: &str) -> Text {
-        self += rhs;
-        self
-    }
-}
-
-impl Add<String> for Text {
-    type Output = Text;
-    fn add(mut self, rhs: String) -> Text {
+    fn add(mut self, rhs: T) -> Text {
         self += rhs;
         self
     }
@@ -661,6 +638,13 @@ impl Add<Text> for &str {
     type Output = Text;
     fn add(self, rhs: Text) -> Text {
         Text::raw(self) + rhs
+    }
+}
+
+impl Add<Text> for &String {
+    type Output = Text;
+    fn add(self, rhs: Text) -> Text {
+        Text::raw(self.as_str()) + rhs
     }
 }
 
@@ -687,12 +671,21 @@ impl AddAssign<&str> for Text {
     }
 }
 
+impl AddAssign<&String> for Text {
+    fn add_assign(&mut self, rhs: &String) {
+        self.push_str(rhs.as_str(), Style::default());
+    }
+}
+
 impl AddAssign<String> for Text {
     fn add_assign(&mut self, rhs: String) {
-        self.push_span(Span {
-            text: rhs,
-            style: Style::default(),
-        });
+        self.push_span(Span::new(rhs, Style::default()));
+    }
+}
+
+impl AddAssign<Span> for Text {
+    fn add_assign(&mut self, rhs: Span) {
+        self.push_span(rhs);
     }
 }
 
@@ -715,7 +708,7 @@ impl AddAssign<String> for Text {
 /// ```
 #[rustfmt::skip]
 pub trait Colorize: Into<Text> + Sized {
-    fn styled(self, f: impl Fn(Style) -> Style) -> Text {
+    fn styled(self, mut f: impl FnMut(Style) -> Style) -> Text {
         let mut out = Text::new();
         for mut span in self.into().spans {
             span.style = f(span.style);
@@ -724,37 +717,21 @@ pub trait Colorize: Into<Text> + Sized {
         out
     }
 
-    fn bold(self) -> Text {
-        self.styled(|s| Style { bold: true, ..s })
-    }
-    fn italic(self) -> Text {
-        self.styled(|s| Style { italic: true, ..s })
-    }
-    fn underline(self) -> Text {
-        self.styled(|s| Style {
-            underline: true,
-            ..s
-        })
-    }
-    fn strikethrough(self) -> Text {
-        self.styled(|s| Style {
-            strikethrough: true,
-            ..s
-        })
-    }
-    fn monospace(self) -> Text {
-        self.styled(|s| Style {
-            monospace: true,
-            ..s
-        })
-    }
-    fn reverse(self) -> Text {
-        self.styled(|s| Style { reverse: true, ..s })
+    fn bold(self) -> Text { self.styled(Style::bold) }
+    fn italic(self) -> Text { self.styled(Style::italic) }
+    fn underline(self) -> Text { self.styled(Style::underline) }
+    fn strikethrough(self) -> Text { self.styled(Style::strikethrough) }
+    fn monospace(self) -> Text { self.styled(Style::monospace) }
+    fn reverse(self) -> Text { self.styled(Style::reverse) }
+
+    /// Replace all span styles with `style`.
+    fn with_style(self, style: Style) -> Text {
+        self.styled(|_| style)
     }
 
     /// Clear all styling on this text (equivalent to IRC's `\x0f` reset).
     fn reset(self) -> Text {
-        self.styled(|_| Style::default())
+        self.with_style(Style::default())
     }
 
     /// Apply a fallback style across all spans: a child span keeps its own
@@ -766,11 +743,11 @@ pub trait Colorize: Into<Text> + Sized {
 
     fn fg(self, c: impl Into<ColorValue>) -> Text {
         let c = c.into();
-        self.styled(move |s| Style { fg: Some(c), ..s })
+        self.styled(|s| s.fg(c))
     }
     fn bg(self, c: impl Into<ColorValue>) -> Text {
         let c = c.into();
-        self.styled(move |s| Style { bg: Some(c), ..s })
+        self.styled(|s| s.bg(c))
     }
 
     /// Set an RGB foreground color via IRC's newer hex-color code (`\x04`).
