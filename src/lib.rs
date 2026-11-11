@@ -327,12 +327,7 @@ impl Text {
     /// surrounding spans on the wire; use [`Text::parse`] to interpret
     /// wire-formatted IRC strings.
     pub fn raw(s: impl Into<String>) -> Self {
-        let mut out = Text::new();
-        out.push_span(Span {
-            text: s.into(),
-            style: Style::default(),
-        });
-        out
+        Text::from(Span::new(s, Style::default()))
     }
 
     /// The canonical sequence of non-empty, style-coalesced [`Span`]s.
@@ -352,9 +347,7 @@ impl Text {
     }
 
     fn push_span(&mut self, mut span: Span) {
-        if span.text.contains(is_format_char) {
-            span.text.retain(|c| !is_format_char(c));
-        }
+        span.text.retain(|c| !is_format_char(c));
         self.push_clean_span(span);
     }
 
@@ -397,31 +390,12 @@ impl Text {
             .sum()
     }
 
-    /// Apply a fallback style across all spans in this text: a child span
-    /// keeps its own fg/bg if it set one, otherwise inherits the fallback's;
-    /// formatting flags (bold, italic, etc.) are unioned in. This is the
-    /// "nested tag" composition some IRC formatting libraries offer — most
-    /// people won't need it since the [`Colorize`] builder methods below are
-    /// usually more direct, but it's handy for composing pre-built chunks.
-    ///
-    /// ```
-    /// use irc_colors::{Text, Style, Colorize};
-    /// let inner = "SPARTA".bold().blue();
-    /// let msg = ("This is " + inner).with_fallback_style(Style::new().red().underline());
-    /// // "This is " -> red + underline
-    /// // "SPARTA"   -> stays blue (child wins), gains underline (union), keeps bold
-    /// # let _ = msg;
-    /// ```
-    pub fn with_fallback_style(self, fallback: Style) -> Text {
-        self.styled(|s| s.with_fallback(fallback))
-    }
-
     /// Serialize to raw IRC-formatted bytes (as a `String`), resetting with
     /// `\x0f` and emitting the new span's codes whenever the style changes.
     /// This is what you send over the wire.
     ///
     /// If a span's `fg`/`bg` mix a palette [`Color`] with an RGB value (only
-    /// possible via [`Text::with_fallback_style`] composition, not the ordinary
+    /// possible via [`Colorize::with_fallback_style`] composition, not the ordinary
     /// [`Colorize`] chain), both are still rendered correctly: the whole
     /// pair is sent in the hex form, with the palette side converted via
     /// its canonical RGB value ([`Color::to_rgb`]) rather than dropped.
@@ -442,10 +416,6 @@ impl Text {
         Ok(())
     }
 
-    fn has_line_breaks(&self) -> bool {
-        self.spans.iter().any(|s| s.text.contains(['\r', '\n']))
-    }
-
     /// Split into a list of non-empty `Text`s, each of which will render to at
     /// most `max_bytes` bytes on the wire, breaking on spaces (`' '`, consuming
     /// the break-point spaces) and never splitting a word in half (unless a
@@ -461,59 +431,6 @@ impl Text {
     /// scratch — so styling is preserved correctly across message
     /// boundaries with no extra bookkeeping needed on your end.
     pub fn wrap(&self, max_bytes: usize) -> Vec<Text> {
-        if !self.has_line_breaks() {
-            return self.wrap_single_line(max_bytes);
-        }
-
-        let mut result = Vec::new();
-        for line in self.split_lines() {
-            result.extend(line.wrap_single_line(max_bytes));
-        }
-        result
-    }
-
-    /// Split on `\r\n`, `\n`, or `\r` line breaks into separate `Text`s
-    /// (formatting carries across the break, matching how most IRC clients
-    /// expect multi-line pastes to behave once split into separate messages).
-    pub fn split_lines(&self) -> Vec<Text> {
-        if !self.has_line_breaks() {
-            return vec![self.clone()];
-        }
-
-        let mut lines = vec![Text::new()];
-        let mut skip_lf = false;
-
-        for span in &self.spans {
-            let mut rest = span.text.as_str();
-            if skip_lf {
-                skip_lf = false;
-                if let Some(after_lf) = rest.strip_prefix('\n') {
-                    rest = after_lf;
-                }
-            }
-            while let Some(pos) = rest.find(['\r', '\n']) {
-                lines
-                    .last_mut()
-                    .unwrap()
-                    .push_clean_str(&rest[..pos], span.style);
-                lines.push(Text::new());
-                let is_cr = rest.as_bytes()[pos] == b'\r';
-                rest = &rest[pos + 1..];
-                if is_cr {
-                    if let Some(after_lf) = rest.strip_prefix('\n') {
-                        rest = after_lf;
-                    } else if rest.is_empty() {
-                        skip_lf = true;
-                    }
-                }
-            }
-            lines.last_mut().unwrap().push_clean_str(rest, span.style);
-        }
-
-        lines
-    }
-
-    fn wrap_single_line(&self, max_bytes: usize) -> Vec<Text> {
         if self.is_empty() {
             return Vec::new();
         }
@@ -533,12 +450,22 @@ impl Text {
         let mut token = Vec::new();
 
         while iter.peek().is_some() {
+            if let Some((g, _)) = iter.next_if(|&(g, _)| matches!(g, "\r" | "\n" | "\r\n")) {
+                if g == "\r" {
+                    iter.next_if(|&(next, _)| next == "\n");
+                }
+                if !line.is_empty() {
+                    lines.push(line.take_line());
+                }
+                continue;
+            }
+
             token.clear();
             while let Some(u) = iter.next_if(|&(g, _)| g == " ") {
                 token.push(u);
             }
             let word_start = token.len();
-            while let Some(u) = iter.next_if(|&(g, _)| g != " ") {
+            while let Some(u) = iter.next_if(|&(g, _)| !matches!(g, " " | "\r" | "\n" | "\r\n")) {
                 token.push(u);
             }
 
@@ -569,6 +496,45 @@ impl Text {
         if !line.is_empty() {
             lines.push(line.take_line());
         }
+
+        lines
+    }
+
+    /// Split on `\r\n`, `\n`, or `\r` line breaks into separate `Text`s
+    /// (formatting carries across the break, matching how most IRC clients
+    /// expect multi-line pastes to behave once split into separate messages).
+    ///
+    /// Unlike [`Text::wrap`], empty lines (including after a trailing newline
+    /// or on an empty `Text`) are preserved as empty `Text` entries.
+    pub fn split_lines(&self) -> Vec<Text> {
+        if !self.spans.iter().any(|s| s.text.contains(['\r', '\n'])) {
+            return vec![self.clone()];
+        }
+
+        let mut lines = Vec::new();
+        let mut cur = Text::new();
+        let mut skip_lf = false;
+
+        for span in &self.spans {
+            let mut rest = span.text.as_str();
+            if skip_lf {
+                rest = rest.strip_prefix('\n').unwrap_or(rest);
+                skip_lf = false;
+            }
+            while let Some(pos) = rest.find(['\r', '\n']) {
+                cur.push_clean_str(&rest[..pos], span.style);
+                lines.push(core::mem::take(&mut cur));
+                let after = &rest[pos + 1..];
+                rest = if rest.as_bytes()[pos] == b'\r' {
+                    skip_lf = after.is_empty();
+                    after.strip_prefix('\n').unwrap_or(after)
+                } else {
+                    after
+                };
+            }
+            cur.push_clean_str(rest, span.style);
+        }
+        lines.push(cur);
 
         lines
     }
@@ -755,9 +721,18 @@ pub trait Colorize: Into<Text> + Sized {
 
     /// Apply a fallback style across all spans: a child span keeps its own
     /// fg/bg if it set one, otherwise inherits the fallback's; formatting
-    /// flags are unioned in.
+    /// flags (bold, italic, etc.) are unioned in.
+    ///
+    /// ```
+    /// use irc_colors::{Style, Colorize};
+    /// let inner = "SPARTA".bold().blue();
+    /// let msg = ("This is " + inner).with_fallback_style(Style::new().red().underline());
+    /// // "This is " -> red + underline
+    /// // "SPARTA"   -> stays blue (child wins), gains underline (union), keeps bold
+    /// # let _ = msg;
+    /// ```
     fn with_fallback_style(self, fallback: Style) -> Text {
-        self.into().with_fallback_style(fallback)
+        self.styled(|s| s.with_fallback(fallback))
     }
 
     fn fg(self, c: impl Into<ColorValue>) -> Text {
@@ -927,7 +902,7 @@ impl fmt::Write for WireLen {
 }
 
 // ---------------------------------------------------------------------------
-// Incremental line buffer for wrapping (checkpoint + truncate)
+// Incremental line buffer for wrapping
 // ---------------------------------------------------------------------------
 
 #[derive(Default)]
@@ -942,28 +917,20 @@ impl LineBuf {
         self.text.is_empty()
     }
 
-    /// Tentatively append `slice` onto the current line, rolling back in O(1)
-    /// via `truncate` if the resulting wire length (including any trailing
-    /// `\x0f` reset) would exceed `max_bytes`.
+    /// Append `slice` onto the current line if the resulting wire length
+    /// (including any trailing `\x0f` reset) stays within `max_bytes`.
     fn try_push(&mut self, slice: &[(&str, Style)], max_bytes: usize) -> bool {
-        let checkpoint = (
-            self.text.spans.len(),
-            self.text.spans.last().map_or(0, |s| s.text.len()),
-            self.wire,
-            self.style,
-        );
-        for &(g, style) in slice {
-            let _ = push_styled(&mut self.wire, &mut self.style, g, style);
-            if self.wire.0 + usize::from(self.style != Style::default()) > max_bytes {
-                self.text.spans.truncate(checkpoint.0);
-                if let Some(last) = self.text.spans.last_mut() {
-                    last.text.truncate(checkpoint.1);
-                }
-                self.wire = checkpoint.2;
-                self.style = checkpoint.3;
+        let (mut wire, mut style) = (self.wire, self.style);
+        for &(g, s) in slice {
+            let _ = push_styled(&mut wire, &mut style, g, s);
+            if wire.0 + usize::from(style != Style::default()) > max_bytes {
                 return false;
             }
-            self.text.push_clean_str(g, style);
+        }
+        self.wire = wire;
+        self.style = style;
+        for &(g, s) in slice {
+            self.text.push_clean_str(g, s);
         }
         true
     }
@@ -995,66 +962,43 @@ fn parse_irc(input: &str) -> Text {
     let mut s = input;
 
     // Reads 1 or 2 ASCII digits from the start of `s`.
-    fn read_code2(s: &mut &str) -> Option<u8> {
-        let count = s
-            .as_bytes()
-            .iter()
-            .take(2)
-            .take_while(|b| b.is_ascii_digit())
-            .count();
-        if count == 0 {
-            None
-        } else {
-            let code = s[..count].parse::<u8>().ok()?;
-            *s = &s[count..];
-            Some(code)
-        }
+    fn read_palette(s: &mut &str) -> Option<Option<ColorValue>> {
+        let n = s.bytes().take(2).take_while(u8::is_ascii_digit).count();
+        let code = s[..n].parse::<u8>().ok()?;
+        *s = &s[n..];
+        Some(Color::from_code(code).map(ColorValue::Palette))
     }
 
     // Reads exactly 6 hex digits from the start of `s`.
-    fn read_hex6(s: &mut &str) -> Option<(u8, u8, u8)> {
-        if s.len() >= 6 && s.as_bytes()[..6].iter().all(|b| b.is_ascii_hexdigit()) {
-            let r = u8::from_str_radix(&s[0..2], 16).ok()?;
-            let g = u8::from_str_radix(&s[2..4], 16).ok()?;
-            let b = u8::from_str_radix(&s[4..6], 16).ok()?;
-            *s = &s[6..];
-            Some((r, g, b))
-        } else {
-            None
-        }
+    fn read_hex(s: &mut &str) -> Option<Option<ColorValue>> {
+        let hex = s
+            .get(..6)
+            .filter(|h| h.bytes().all(|b| b.is_ascii_hexdigit()))?;
+        let [_, r, g, b] = u32::from_str_radix(hex, 16).ok()?.to_be_bytes();
+        *s = &s[6..];
+        Some(Some(ColorValue::Rgb(r, g, b)))
     }
 
-    // Reads an optional foreground and optional `,`-prefixed background pair.
-    fn read_color_pair<T>(
+    fn apply_color(
         s: &mut &str,
-        read: impl Fn(&mut &str) -> Option<T>,
-    ) -> (Option<T>, Option<T>) {
+        style: &mut Style,
+        read: fn(&mut &str) -> Option<Option<ColorValue>>,
+    ) {
         let fg = read(s);
         let bg = s.strip_prefix(',').and_then(|mut rest| {
             let bg = read(&mut rest)?;
             *s = rest;
             Some(bg)
         });
-        (fg, bg)
-    }
-
-    fn apply_color_pair<T>(
-        style: &mut Style,
-        pair: (Option<T>, Option<T>),
-        to_color: impl Fn(T) -> Option<ColorValue>,
-    ) {
-        match pair {
-            (None, None) => {
-                style.fg = None;
-                style.bg = None;
+        if fg.is_none() && bg.is_none() {
+            style.fg = None;
+            style.bg = None;
+        } else {
+            if let Some(fg) = fg {
+                style.fg = fg;
             }
-            (fg, bg) => {
-                if let Some(fg) = fg {
-                    style.fg = to_color(fg);
-                }
-                if let Some(bg) = bg {
-                    style.bg = to_color(bg);
-                }
+            if let Some(bg) = bg {
+                style.bg = bg;
             }
         }
     }
@@ -1071,16 +1015,8 @@ fn parse_irc(input: &str) -> Text {
             CTRL_MONOSPACE => style.monospace = !style.monospace,
             CTRL_REVERSE => style.reverse = !style.reverse,
             CTRL_RESET => style = Style::default(),
-            CTRL_COLOR => {
-                let pair = read_color_pair(&mut s, read_code2);
-                apply_color_pair(&mut style, pair, |c| {
-                    Color::from_code(c).map(ColorValue::Palette)
-                });
-            }
-            CTRL_HEX_COLOR => {
-                let pair = read_color_pair(&mut s, read_hex6);
-                apply_color_pair(&mut style, pair, |(r, g, b)| Some(ColorValue::Rgb(r, g, b)));
-            }
+            CTRL_COLOR => apply_color(&mut s, &mut style, read_palette),
+            CTRL_HEX_COLOR => apply_color(&mut s, &mut style, read_hex),
             _ => unreachable!(),
         }
     }
