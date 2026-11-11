@@ -185,6 +185,15 @@ pub struct Span {
     pub style: Style,
 }
 
+impl Span {
+    pub fn new(text: impl Into<String>, style: Style) -> Self {
+        Span {
+            text: text.into(),
+            style,
+        }
+    }
+}
+
 impl Style {
     pub fn new() -> Self {
         Style::default()
@@ -293,7 +302,7 @@ impl Style {
 /// [`Text::to_irc_string`] (or just `.to_string()` / `{}` via [`Display`](fmt::Display)).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct Text {
-    pub spans: Vec<Span>,
+    spans: Vec<Span>,
 }
 
 impl Text {
@@ -301,21 +310,49 @@ impl Text {
         Text { spans: Vec::new() }
     }
 
+    /// Plain, unformatted text. Any raw IRC formatting control bytes embedded
+    /// in `s` are stripped so they cannot spoof styles or break out of
+    /// surrounding spans on the wire; use [`Text::parse`] to interpret
+    /// wire-formatted IRC strings.
     pub fn raw(s: impl Into<String>) -> Self {
-        let s = s.into();
-        if s.is_empty() {
-            Text::new()
-        } else {
-            Text {
-                spans: vec![Span {
-                    text: s,
-                    style: Style::default(),
-                }],
-            }
-        }
+        let mut out = Text::new();
+        out.push_span(Span {
+            text: s.into(),
+            style: Style::default(),
+        });
+        out
+    }
+
+    /// The canonical sequence of non-empty, style-coalesced [`Span`]s.
+    pub fn spans(&self) -> &[Span] {
+        &self.spans
+    }
+
+    /// Whether this text has no visible or whitespace content.
+    pub fn is_empty(&self) -> bool {
+        self.spans.is_empty()
     }
 
     fn push_str(&mut self, text: &str, style: Style) {
+        if text.contains(FORMAT_CHARS) {
+            let cleaned: String = text.chars().filter(|c| !FORMAT_CHARS.contains(c)).collect();
+            self.push_clean_span(Span {
+                text: cleaned,
+                style,
+            });
+        } else {
+            self.push_clean_str(text, style);
+        }
+    }
+
+    fn push_span(&mut self, mut span: Span) {
+        if span.text.contains(FORMAT_CHARS) {
+            span.text.retain(|c| !FORMAT_CHARS.contains(&c));
+        }
+        self.push_clean_span(span);
+    }
+
+    fn push_clean_str(&mut self, text: &str, style: Style) {
         if text.is_empty() {
             return;
         }
@@ -328,7 +365,7 @@ impl Text {
         }
     }
 
-    fn push_span(&mut self, span: Span) {
+    fn push_clean_span(&mut self, span: Span) {
         if span.text.is_empty() {
             return;
         }
@@ -373,7 +410,7 @@ impl Text {
         let mut out = Text::new();
         for mut span in self.spans {
             span.style = span.style.with_fallback(fallback);
-            out.push_span(span);
+            out.push_clean_span(span);
         }
         out
     }
@@ -483,7 +520,7 @@ impl Text {
     fn from_units(units: &[(&str, Style)]) -> Text {
         let mut out = Text::new();
         for &(g, style) in units {
-            out.push_str(g, style);
+            out.push_clean_str(g, style);
         }
         out
     }
@@ -564,6 +601,30 @@ impl From<String> for Text {
     }
 }
 
+impl From<Span> for Text {
+    fn from(span: Span) -> Self {
+        let mut out = Text::new();
+        out.push_span(span);
+        out
+    }
+}
+
+impl<T: Into<Text>> Extend<T> for Text {
+    fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
+        for item in iter {
+            *self += item.into();
+        }
+    }
+}
+
+impl<T: Into<Text>> FromIterator<T> for Text {
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        let mut out = Text::new();
+        out.extend(iter);
+        out
+    }
+}
+
 impl fmt::Display for Text {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.to_irc_string())
@@ -615,30 +676,23 @@ impl Add<Text> for String {
 impl AddAssign<Text> for Text {
     fn add_assign(&mut self, rhs: Text) {
         for span in rhs.spans {
-            self.push_span(span);
+            self.push_clean_span(span);
         }
     }
 }
 
 impl AddAssign<&str> for Text {
     fn add_assign(&mut self, rhs: &str) {
-        if !rhs.is_empty() {
-            self.push_span(Span {
-                text: rhs.to_string(),
-                style: Style::default(),
-            });
-        }
+        self.push_str(rhs, Style::default());
     }
 }
 
 impl AddAssign<String> for Text {
     fn add_assign(&mut self, rhs: String) {
-        if !rhs.is_empty() {
-            self.push_span(Span {
-                text: rhs,
-                style: Style::default(),
-            });
-        }
+        self.push_span(Span {
+            text: rhs,
+            style: Style::default(),
+        });
     }
 }
 
@@ -665,7 +719,7 @@ pub trait Colorize: Into<Text> + Sized {
         let mut out = Text::new();
         for mut span in self.into().spans {
             span.style = f(span.style);
-            out.push_span(span);
+            out.push_clean_span(span);
         }
         out
     }
@@ -991,7 +1045,7 @@ fn parse_irc(input: &str) -> Text {
     }
 
     while let Some(pos) = s.find(FORMAT_CHARS) {
-        out.push_str(&s[..pos], style);
+        out.push_clean_str(&s[..pos], style);
         let c = s.as_bytes()[pos] as char;
         s = &s[pos + 1..];
         match c {
@@ -1015,7 +1069,7 @@ fn parse_irc(input: &str) -> Text {
             _ => unreachable!(),
         }
     }
-    out.push_str(s, style);
+    out.push_clean_str(s, style);
 
     out
 }

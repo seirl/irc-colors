@@ -11,7 +11,7 @@ fn chain_and_concat() {
 #[test]
 fn later_call_wins() {
     let t = "x".blue().red();
-    assert_eq!(t.spans[0].style.fg, Some(ColorValue::Palette(Color::Red)));
+    assert_eq!(t.spans()[0].style.fg, Some(ColorValue::Palette(Color::Red)));
 }
 
 #[test]
@@ -20,14 +20,17 @@ fn fallback_style_child_wins_bg_inherits_formats_union() {
     let inner = "SPARTA".bold().blue();
     let theme = Style::new().red().underline();
     let msg = ("This is " + inner.clone()).with_fallback_style(theme);
-    assert_eq!(msg.spans[0].style.fg, Some(ColorValue::Palette(Color::Red)));
-    assert!(msg.spans[0].style.underline);
     assert_eq!(
-        msg.spans[1].style.fg,
+        msg.spans()[0].style.fg,
+        Some(ColorValue::Palette(Color::Red))
+    );
+    assert!(msg.spans()[0].style.underline);
+    assert_eq!(
+        msg.spans()[1].style.fg,
         Some(ColorValue::Palette(Color::Blue))
     ); // child wins
-    assert!(msg.spans[1].style.bold); // kept its own
-    assert!(msg.spans[1].style.underline); // inherited via union
+    assert!(msg.spans()[1].style.bold); // kept its own
+    assert!(msg.spans()[1].style.underline); // inherited via union
 
     let msg2 = Text::with_fallback(theme, "This is " + inner);
     assert_eq!(msg, msg2);
@@ -85,9 +88,9 @@ fn new_format_codes_toggle_and_round_trip() {
 
     let reparsed = Text::parse(&rendered);
     assert_eq!(reparsed.plain(), original.plain());
-    assert!(reparsed.spans[0].style.strikethrough);
-    assert!(reparsed.spans[1].style.monospace);
-    assert!(reparsed.spans[2].style.italic);
+    assert!(reparsed.spans()[0].style.strikethrough);
+    assert!(reparsed.spans()[1].style.monospace);
+    assert!(reparsed.spans()[2].style.italic);
 }
 
 #[test]
@@ -101,17 +104,17 @@ fn hex_color_round_trip() {
     let reparsed = Text::parse(&rendered);
     assert_eq!(reparsed.plain(), "hot pink");
     assert_eq!(
-        reparsed.spans[0].style.fg,
+        reparsed.spans()[0].style.fg,
         Some(ColorValue::Rgb(255, 105, 180))
     );
-    assert_eq!(reparsed.spans[0].style.bg, Some(ColorValue::Rgb(0, 0, 0)));
+    assert_eq!(reparsed.spans()[0].style.bg, Some(ColorValue::Rgb(0, 0, 0)));
 }
 
 #[test]
 fn palette_and_hex_are_distinct_kinds() {
     let palette = "x".red();
     let hex = "x".rgb(255, 0, 0);
-    assert_ne!(palette.spans[0].style.fg, hex.spans[0].style.fg);
+    assert_ne!(palette.spans()[0].style.fg, hex.spans()[0].style.fg);
 
     for code in 0..=15u8 {
         let color = Color::from_code(code).expect("0..=15 must map to a Color");
@@ -150,9 +153,9 @@ fn parse_supports_background_only_color_spec() {
     // from other senders may use bare `\x03,04` — must still parse cleanly.
     let parsed = Text::parse("\u{03},04text");
     assert_eq!(parsed.plain(), "text");
-    assert_eq!(parsed.spans[0].style.fg, None);
+    assert_eq!(parsed.spans()[0].style.fg, None);
     assert_eq!(
-        parsed.spans[0].style.bg,
+        parsed.spans()[0].style.bg,
         Some(ColorValue::Palette(Color::Red))
     );
 
@@ -160,26 +163,26 @@ fn parse_supports_background_only_color_spec() {
     // symmetrical with how a foreground-only spec preserves an active background.
     let kept_fg = Text::parse("\u{03}02hi\u{03},04there");
     assert_eq!(
-        kept_fg.spans[0].style.fg,
+        kept_fg.spans()[0].style.fg,
         Some(ColorValue::Palette(Color::Blue))
     );
-    assert_eq!(kept_fg.spans[0].style.bg, None);
+    assert_eq!(kept_fg.spans()[0].style.bg, None);
     assert_eq!(
-        kept_fg.spans[1].style.fg,
+        kept_fg.spans()[1].style.fg,
         Some(ColorValue::Palette(Color::Blue))
     );
     assert_eq!(
-        kept_fg.spans[1].style.bg,
+        kept_fg.spans()[1].style.bg,
         Some(ColorValue::Palette(Color::Red))
     );
 
     let kept_hex_fg = Text::parse("\u{04}0000FFhi\u{04},FF0000there");
     assert_eq!(
-        kept_hex_fg.spans[1].style.fg,
+        kept_hex_fg.spans()[1].style.fg,
         Some(ColorValue::Rgb(0, 0, 255))
     );
     assert_eq!(
-        kept_hex_fg.spans[1].style.bg,
+        kept_hex_fg.spans()[1].style.bg,
         Some(ColorValue::Rgb(255, 0, 0))
     );
 }
@@ -193,9 +196,12 @@ fn hex_and_palette_mixed_in_one_span_keeps_both_colors() {
     let rendered = merged.to_irc_string();
     let reparsed = Text::parse(&rendered);
     // Foreground must survive as its RGB equivalent, not vanish.
-    assert_eq!(reparsed.spans[0].style.fg, Some(ColorValue::Rgb(255, 0, 0)));
     assert_eq!(
-        reparsed.spans[0].style.bg,
+        reparsed.spans()[0].style.fg,
+        Some(ColorValue::Rgb(255, 0, 0))
+    );
+    assert_eq!(
+        reparsed.spans()[0].style.bg,
         Some(ColorValue::Rgb(10, 20, 30))
     );
 }
@@ -271,22 +277,23 @@ fn background_is_cleared_when_next_span_has_foreground_only() {
     let reparsed = Text::parse(&rendered);
 
     assert_eq!(
-        reparsed.spans[0].style.fg,
+        reparsed.spans()[0].style.fg,
         Some(ColorValue::Palette(Color::Red))
     );
     assert_eq!(
-        reparsed.spans[0].style.bg,
+        reparsed.spans()[0].style.bg,
         Some(ColorValue::Palette(Color::Blue))
     );
 
     assert_eq!(
-        reparsed.spans[1].style.fg,
+        reparsed.spans()[1].style.fg,
         Some(ColorValue::Palette(Color::Green))
     );
     assert_eq!(
-        reparsed.spans[1].style.bg, None,
+        reparsed.spans()[1].style.bg,
+        None,
         "background color should have been cleared, but was: {:?}",
-        reparsed.spans[1].style.bg
+        reparsed.spans()[1].style.bg
     );
 }
 
@@ -297,10 +304,10 @@ fn parse_does_not_swallow_comma_digit_after_foreground_color() {
     let reparsed = Text::parse(&rendered);
     assert_eq!(reparsed.plain(), ",50 USD");
     assert_eq!(
-        reparsed.spans[0].style.fg,
+        reparsed.spans()[0].style.fg,
         Some(ColorValue::Palette(Color::Red))
     );
-    assert_eq!(reparsed.spans[0].style.bg, None);
+    assert_eq!(reparsed.spans()[0].style.bg, None);
 }
 
 #[test]
@@ -309,8 +316,11 @@ fn hex_background_only_round_trip() {
     let rendered = original.to_irc_string();
     let reparsed = Text::parse(&rendered);
     assert_eq!(reparsed.plain(), "text");
-    assert_eq!(reparsed.spans[0].style.fg, None);
-    assert_eq!(reparsed.spans[0].style.bg, Some(ColorValue::Rgb(255, 0, 0)));
+    assert_eq!(reparsed.spans()[0].style.fg, None);
+    assert_eq!(
+        reparsed.spans()[0].style.bg,
+        Some(ColorValue::Rgb(255, 0, 0))
+    );
 }
 
 #[test]
@@ -320,7 +330,7 @@ fn string_add_text() {
     assert_eq!(borrowed.plain(), "Hello, ");
     let styled = s + "world".bold().red();
     assert_eq!(styled.plain(), "Hello, world");
-    assert!(styled.spans[1].style.bold);
+    assert!(styled.spans()[1].style.bold);
 }
 
 #[test]
@@ -328,30 +338,42 @@ fn parse_comprehensive_edge_cases() {
     // 1-digit code
     let t1 = Text::parse("\u{03}4Hello");
     assert_eq!(t1.plain(), "Hello");
-    assert_eq!(t1.spans[0].style.fg, Some(ColorValue::Palette(Color::Red)));
+    assert_eq!(
+        t1.spans()[0].style.fg,
+        Some(ColorValue::Palette(Color::Red))
+    );
 
     // 1-digit fg, 1-digit bg
     let t2 = Text::parse("\u{03}4,2Hello");
     assert_eq!(t2.plain(), "Hello");
-    assert_eq!(t2.spans[0].style.fg, Some(ColorValue::Palette(Color::Red)));
-    assert_eq!(t2.spans[0].style.bg, Some(ColorValue::Palette(Color::Blue)));
+    assert_eq!(
+        t2.spans()[0].style.fg,
+        Some(ColorValue::Palette(Color::Red))
+    );
+    assert_eq!(
+        t2.spans()[0].style.bg,
+        Some(ColorValue::Palette(Color::Blue))
+    );
 
     // Bare reset in middle
     let t3 = Text::parse("\u{03}04Red\u{03}Plain");
     assert_eq!(t3.plain(), "RedPlain");
-    assert_eq!(t3.spans[0].style.fg, Some(ColorValue::Palette(Color::Red)));
-    assert_eq!(t3.spans[1].style.fg, None);
+    assert_eq!(
+        t3.spans()[0].style.fg,
+        Some(ColorValue::Palette(Color::Red))
+    );
+    assert_eq!(t3.spans()[1].style.fg, None);
 
     // Hex with lowercase digits
     let t4 = Text::parse("\u{04}00ff00,0000ffText");
     assert_eq!(t4.plain(), "Text");
-    assert_eq!(t4.spans[0].style.fg, Some(ColorValue::Rgb(0, 255, 0)));
-    assert_eq!(t4.spans[0].style.bg, Some(ColorValue::Rgb(0, 0, 255)));
+    assert_eq!(t4.spans()[0].style.fg, Some(ColorValue::Rgb(0, 255, 0)));
+    assert_eq!(t4.spans()[0].style.bg, Some(ColorValue::Rgb(0, 0, 255)));
 
     // Incomplete hex digits (e.g. only 4 digits) does not eat text
     let t5 = Text::parse("\u{04}FFAAText");
     assert_eq!(t5.plain(), "FFAAText");
-    assert_eq!(t5.spans[0].style.fg, None);
+    assert_eq!(t5.spans()[0].style.fg, None);
 }
 
 #[test]
@@ -364,9 +386,9 @@ fn palette_background_only_emits_spec_compliant_99_and_round_trips() {
 
     let reparsed = Text::parse(&rendered);
     assert_eq!(reparsed.plain(), "alert");
-    assert_eq!(reparsed.spans[0].style.fg, None);
+    assert_eq!(reparsed.spans()[0].style.fg, None);
     assert_eq!(
-        reparsed.spans[0].style.bg,
+        reparsed.spans()[0].style.bg,
         Some(ColorValue::Palette(Color::Red))
     );
 }
@@ -378,13 +400,13 @@ fn foreground_to_background_only_clears_foreground() {
 
     let reparsed = Text::parse(&rendered);
     assert_eq!(
-        reparsed.spans[0].style.fg,
+        reparsed.spans()[0].style.fg,
         Some(ColorValue::Palette(Color::Red))
     );
-    assert_eq!(reparsed.spans[0].style.bg, None);
-    assert_eq!(reparsed.spans[1].style.fg, None);
+    assert_eq!(reparsed.spans()[0].style.bg, None);
+    assert_eq!(reparsed.spans()[1].style.fg, None);
     assert_eq!(
-        reparsed.spans[1].style.bg,
+        reparsed.spans()[1].style.bg,
         Some(ColorValue::Palette(Color::Blue))
     );
 }
@@ -529,24 +551,15 @@ fn crlf_and_cr_are_split_cleanly_including_across_spans() {
         assert!(!wire.contains('\n'));
     }
 
-    // `\r\n` split across two spans (even with an empty span in between)
+    // `\r\n` split across two spans (even with an empty span collected in between)
     // must still count as a single line break, not two.
-    let cross_span = Text {
-        spans: vec![
-            Span {
-                text: "first\r".into(),
-                style: Style::new().red(),
-            },
-            Span {
-                text: String::new(),
-                style: Style::new().green(),
-            },
-            Span {
-                text: "\nsecond".into(),
-                style: Style::new().blue(),
-            },
-        ],
-    };
+    let cross_span: Text = [
+        Span::new("first\r", Style::new().red()),
+        Span::new("", Style::new().green()),
+        Span::new("\nsecond", Style::new().blue()),
+    ]
+    .into_iter()
+    .collect();
     let cross_lines = cross_span.split_lines();
     let cross_plains: Vec<String> = cross_lines.iter().map(|l| l.plain()).collect();
     assert_eq!(cross_plains, vec!["first", "second"]);
@@ -563,22 +576,13 @@ fn crlf_and_cr_are_split_cleanly_including_across_spans() {
 #[test]
 fn empty_spans_do_not_break_digit_disambiguation() {
     use irc_color::{Span, Style};
-    let tricky = Text {
-        spans: vec![
-            Span {
-                text: "hi".into(),
-                style: Style::new().red(),
-            },
-            Span {
-                text: String::new(),
-                style: Style::default(),
-            },
-            Span {
-                text: "5 apples".into(),
-                style: Style::default(),
-            },
-        ],
-    };
+    let tricky: Text = [
+        Span::new("hi", Style::new().red()),
+        Span::new("", Style::default()),
+        Span::new("5 apples", Style::default()),
+    ]
+    .into_iter()
+    .collect();
     let rendered = tricky.to_irc_string();
     let reparsed = Text::parse(&rendered);
     assert_eq!(reparsed.plain(), "hi5 apples");
@@ -612,37 +616,37 @@ fn parse_stateful_toggles_and_inherited_background() {
         "\u{02}b\u{02}\u{1d}i\u{1d}\u{1f}u\u{1f}\u{1e}s\u{1e}\u{11}m\u{11}\u{16}r\u{16}p",
     );
     assert_eq!(toggled.plain(), "biusmrp");
-    assert_eq!(toggled.spans[0].style, Style::new().bold());
-    assert_eq!(toggled.spans[1].style, Style::new().italic());
-    assert_eq!(toggled.spans[2].style, Style::new().underline());
-    assert_eq!(toggled.spans[3].style, Style::new().strikethrough());
-    assert_eq!(toggled.spans[4].style, Style::new().monospace());
-    assert_eq!(toggled.spans[5].style, Style::new().reverse());
-    assert_eq!(toggled.spans[6].style, Style::default());
+    assert_eq!(toggled.spans()[0].style, Style::new().bold());
+    assert_eq!(toggled.spans()[1].style, Style::new().italic());
+    assert_eq!(toggled.spans()[2].style, Style::new().underline());
+    assert_eq!(toggled.spans()[3].style, Style::new().strikethrough());
+    assert_eq!(toggled.spans()[4].style, Style::new().monospace());
+    assert_eq!(toggled.spans()[5].style, Style::new().reverse());
+    assert_eq!(toggled.spans()[6].style, Style::default());
 
     // Foreground-only `\x03<fg>` / `\x04<hex>` preserves an active background,
     // while bare `\x03` / `\x04` clears both colors without clearing bold.
     let inherited_pal = Text::parse("\u{02}\u{03}04,02a\u{03}03b\u{03}c");
     assert_eq!(
-        inherited_pal.spans[0].style,
+        inherited_pal.spans()[0].style,
         Style::new().bold().red().on_blue()
     );
     assert_eq!(
-        inherited_pal.spans[1].style,
+        inherited_pal.spans()[1].style,
         Style::new().bold().green().on_blue()
     );
-    assert_eq!(inherited_pal.spans[2].style, Style::new().bold());
+    assert_eq!(inherited_pal.spans()[2].style, Style::new().bold());
 
     let inherited_hex = Text::parse("\u{04}FF0000,0000FFa\u{04}00FF00b\u{04}c");
     assert_eq!(
-        inherited_hex.spans[0].style,
+        inherited_hex.spans()[0].style,
         Style::new().rgb(255, 0, 0).on_rgb(0, 0, 255)
     );
     assert_eq!(
-        inherited_hex.spans[1].style,
+        inherited_hex.spans()[1].style,
         Style::new().rgb(0, 255, 0).on_rgb(0, 0, 255)
     );
-    assert_eq!(inherited_hex.spans[2].style, Style::default());
+    assert_eq!(inherited_hex.spans()[2].style, Style::default());
 }
 
 #[test]
@@ -665,11 +669,11 @@ fn reverse_round_trip() {
 #[test]
 fn colorize_reset_clears_style_and_coalesces_spans() {
     let styled = "Hello ".bold().red() + "world".underline().blue();
-    assert_eq!(styled.spans.len(), 2);
+    assert_eq!(styled.spans().len(), 2);
 
     let cleared = styled.reset();
     assert_eq!(cleared, Text::raw("Hello world"));
-    assert_eq!(cleared.spans.len(), 1);
+    assert_eq!(cleared.spans().len(), 1);
     assert_eq!(cleared.to_irc_string(), "Hello world");
 }
 
@@ -744,20 +748,39 @@ fn randomized_round_trip_and_wrap_invariants() {
                 monospace: bits & 16 != 0,
                 reverse: bits & 32 != 0,
             };
-            t += Text {
-                spans: vec![Span {
-                    text: frag.to_string(),
-                    style,
-                }],
-            };
+            t += Text::from(Span::new(frag, style));
         }
+
+        // Mixed palette + RGB in a single span promotes the palette side to its
+        // canonical RGB value on the wire; all other styles round-trip identically.
+        let normalize_wire = |mut s: Style| {
+            let any_rgb = matches!(s.fg, Some(ColorValue::Rgb(..)))
+                || matches!(s.bg, Some(ColorValue::Rgb(..)));
+            if any_rgb {
+                s.fg = s.fg.map(|c| match c {
+                    ColorValue::Palette(p) => {
+                        let (r, g, b) = p.to_rgb();
+                        ColorValue::Rgb(r, g, b)
+                    }
+                    rgb => rgb,
+                });
+                s.bg = s.bg.map(|c| match c {
+                    ColorValue::Palette(p) => {
+                        let (r, g, b) = p.to_rgb();
+                        ColorValue::Rgb(r, g, b)
+                    }
+                    rgb => rgb,
+                });
+            }
+            s
+        };
 
         let wire = t.to_irc_string();
         let reparsed = Text::parse(&wire);
         assert_eq!(
-            reparsed.plain(),
-            t.plain(),
-            "plain mismatch on case {}: wire={:?}",
+            reparsed,
+            t.clone().styled(normalize_wire),
+            "round-trip mismatch on case {}: wire={:?}",
             case,
             wire
         );
@@ -779,8 +802,35 @@ fn randomized_round_trip_and_wrap_invariants() {
                         cw
                     );
                 }
-                assert_eq!(Text::parse(&cw).plain(), chunk.plain());
+                assert_eq!(Text::parse(&cw), chunk.styled(normalize_wire));
             }
         }
     }
+}
+
+#[test]
+fn spans_are_canonical_and_strip_embedded_format_bytes() {
+    use irc_color::{Span, Style};
+
+    assert!(Text::new().is_empty());
+    assert!(Text::raw("").is_empty());
+    assert!(Text::from(Span::new("", Style::new().red())).is_empty());
+    assert!(Text::raw("\u{02}\u{0f}").is_empty());
+
+    // Collecting adjacent matching spans and empty spans produces canonical equality.
+    let built: Text = [
+        Span::new("hel", Style::new().red()),
+        Span::new("", Style::new().blue()),
+        Span::new("lo", Style::new().red()),
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(built, "hello".red());
+    assert_eq!(built.spans().len(), 1);
+
+    // Embedded IRC control bytes inside untrusted plain text cannot break out of outer styles.
+    let untrusted = "safe\u{0f}not-plain\u{02}not-bold";
+    let msg = ("Alert: " + Text::raw(untrusted)).red();
+    assert_eq!(msg.plain(), "Alert: safenot-plainnot-bold");
+    assert_eq!(Text::parse(&msg.to_irc_string()), msg);
 }
