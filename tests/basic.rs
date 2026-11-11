@@ -128,8 +128,8 @@ fn parse_does_not_swallow_a_literal_comma_after_a_color_code() {
 
 #[test]
 fn parse_supports_background_only_color_spec() {
-    // \x03,04 (bare fg, valid bg digits) is a real form our own serializer
-    // can emit when fg is None but bg is set - must round-trip correctly.
+    // Although our serializer emits spec-compliant `\x0399,04`, incoming text
+    // from other senders may use bare `\x03,04` — must still parse cleanly.
     let parsed = Text::parse("\u{03},04text");
     assert_eq!(parsed.plain(), "text");
     assert_eq!(parsed.spans[0].style.fg, None);
@@ -294,4 +294,339 @@ fn parse_comprehensive_edge_cases() {
     let t5 = Text::parse("\u{04}FFAAText");
     assert_eq!(t5.plain(), "FFAAText");
     assert_eq!(t5.spans[0].style.fg, None);
+}
+
+#[test]
+fn palette_background_only_emits_spec_compliant_99_and_round_trips() {
+    let original = "alert".on_red();
+    let rendered = original.to_irc_string();
+    // Must use spec-compliant `99` default-fg placeholder rather than `\x03,04`,
+    // so real IRC clients never print `,04` as literal text.
+    assert_eq!(rendered, "\u{03}99,04alert\u{0f}");
+
+    let reparsed = Text::parse(&rendered);
+    assert_eq!(reparsed.plain(), "alert");
+    assert_eq!(reparsed.spans[0].style.fg, None);
+    assert_eq!(
+        reparsed.spans[0].style.bg,
+        Some(ColorValue::Palette(Color::Red))
+    );
+}
+
+#[test]
+fn foreground_to_background_only_clears_foreground() {
+    let msg = "fg".red() + "bg".on_blue();
+    let rendered = msg.to_irc_string();
+
+    let reparsed = Text::parse(&rendered);
+    assert_eq!(reparsed.spans[0].style.fg, Some(ColorValue::Palette(Color::Red)));
+    assert_eq!(reparsed.spans[0].style.bg, None);
+    assert_eq!(reparsed.spans[1].style.fg, None);
+    assert_eq!(reparsed.spans[1].style.bg, Some(ColorValue::Palette(Color::Blue)));
+}
+
+#[test]
+fn wrap_does_not_create_spurious_space_line_at_exact_boundary() {
+    // "hello" is 5 bytes; with max_bytes=5, the separating space must not
+    // force a 3-line split ["hello", " ", "world"].
+    let chunks = Text::raw("hello world").wrap(5);
+    let plains: Vec<String> = chunks.iter().map(|c| c.plain()).collect();
+    assert_eq!(plains, vec!["hello", "world"]);
+    for c in &chunks {
+        assert!(c.to_irc_string().len() <= 5);
+    }
+
+    // Same when an overlong word is an exact multiple of max_bytes followed by a space.
+    let chunks2 = Text::raw("abcdefghijkl world").wrap(6);
+    let plains2: Vec<String> = chunks2.iter().map(|c| c.plain()).collect();
+    assert_eq!(plains2, vec!["abcdef", "ghijkl", "world"]);
+    for c in &chunks2 {
+        assert!(c.to_irc_string().len() <= 6);
+    }
+}
+
+#[test]
+fn wrap_hard_split_packs_remainder_with_following_short_word() {
+    // "abcdefgh" (8) split at max_bytes=6 -> "abcdef" (6) + "gh" (2), and
+    // " ij" (3) fits right onto the second line ("gh ij" = 5 <= 6)!
+    let chunks = Text::raw("abcdefgh ij").wrap(6);
+    let plains: Vec<String> = chunks.iter().map(|c| c.plain()).collect();
+    assert_eq!(plains, vec!["abcdef", "gh ij"]);
+    for c in &chunks {
+        assert!(c.to_irc_string().len() <= 6);
+    }
+}
+
+#[test]
+fn wrap_preserves_word_separation_when_words_hit_exact_max_bytes() {
+    // Regression test for the previous `pending_ws` implementation:
+    // "the quick" without its trailing space is 9 bytes. At max_bytes=9,
+    // dropping that space produced ["the quick", "brown"] -> rejoined "the quickbrown"!
+    let exact = Text::raw("the quick brown");
+    let chunks = exact.wrap(9);
+    let rejoined: String = chunks.iter().map(|c| c.plain()).collect();
+    assert_eq!(rejoined, "the quick brown");
+    for c in &chunks {
+        assert!(c.to_irc_string().len() <= 9);
+    }
+
+    // Sweep every max_bytes alignment (6..=40) across plain and styled text:
+    // whenever max_bytes can fit each individual word + space, concatenating
+    // chunk.plain() must reproduce the original string verbatim (no lost spaces).
+    let sentence = "the quick brown fox jumps over the lazy dog";
+    for max in 6..=40 {
+        let plain_chunks = Text::raw(sentence).wrap(max);
+        let plain_rejoined: String = plain_chunks.iter().map(|c| c.plain()).collect();
+        assert_eq!(plain_rejoined, sentence, "lost space at max_bytes={}", max);
+        for c in &plain_chunks {
+            assert!(c.to_irc_string().len() <= max);
+        }
+    }
+    // Styled: longest word ("quick " / "brown " / "jumps ") + bold(1) + red(3) + reset(1) = 11 bytes.
+    let styled = sentence.bold().red();
+    for max in 11..=45 {
+        let styled_chunks = styled.wrap(max);
+        let styled_rejoined: String = styled_chunks.iter().map(|c| c.plain()).collect();
+        assert_eq!(styled_rejoined, sentence, "lost space (styled) at max_bytes={}", max);
+        for c in &styled_chunks {
+            assert!(c.to_irc_string().len() <= max);
+        }
+    }
+}
+
+#[test]
+fn crlf_and_cr_are_split_cleanly_including_across_spans() {
+    use irc_color::{Span, Style};
+
+    let msg = "line1\r\nline2\rline3\nline4".bold().red();
+    let lines = msg.split_lines();
+    let plains: Vec<String> = lines.iter().map(|l| l.plain()).collect();
+    assert_eq!(plains, vec!["line1", "line2", "line3", "line4"]);
+    for l in &lines {
+        let wire = l.to_irc_string();
+        assert!(!wire.contains('\r'));
+        assert!(!wire.contains('\n'));
+    }
+
+    // `\r\n` split across two spans (even with an empty span in between)
+    // must still count as a single line break, not two.
+    let cross_span = Text {
+        spans: vec![
+            Span {
+                text: "first\r".into(),
+                style: Style::new().red(),
+            },
+            Span {
+                text: String::new(),
+                style: Style::new().green(),
+            },
+            Span {
+                text: "\nsecond".into(),
+                style: Style::new().blue(),
+            },
+        ],
+    };
+    let cross_lines = cross_span.split_lines();
+    let cross_plains: Vec<String> = cross_lines.iter().map(|l| l.plain()).collect();
+    assert_eq!(cross_plains, vec!["first", "second"]);
+
+    // Regression test: `to_irc_string()` itself must stay lossless and agree
+    // with `plain()` rather than silently deleting `\r` behind `plain()`'s back.
+    let raw_unsplit = "keep\rme".red();
+    assert_eq!(
+        Text::parse(&raw_unsplit.to_irc_string()).plain(),
+        raw_unsplit.plain()
+    );
+}
+
+#[test]
+fn empty_spans_do_not_break_digit_disambiguation() {
+    use irc_color::{Span, Style};
+    let tricky = Text {
+        spans: vec![
+            Span {
+                text: "hi".into(),
+                style: Style::new().red(),
+            },
+            Span {
+                text: String::new(),
+                style: Style::default(),
+            },
+            Span {
+                text: "5 apples".into(),
+                style: Style::default(),
+            },
+        ],
+    };
+    let rendered = tricky.to_irc_string();
+    let reparsed = Text::parse(&rendered);
+    assert_eq!(reparsed.plain(), "hi5 apples");
+}
+
+#[test]
+fn style_transitions_reset_with_x0f() {
+    let to_plain = "fancy".bold().italic().underline().strikethrough().red() + "123";
+    let rendered = to_plain.to_irc_string();
+    assert!(rendered.ends_with("\u{0f}123"), "rendered was {:?}", rendered);
+    assert_eq!(Text::parse(&rendered), to_plain);
+
+    let overlap = "a".bold().red() + "b".bold().blue();
+    assert_eq!(
+        overlap.to_irc_string(),
+        "\u{02}\u{03}04a\u{0f}\u{02}\u{03}02b\u{0f}"
+    );
+    assert_eq!(Text::parse(&overlap.to_irc_string()), overlap);
+}
+
+#[test]
+fn parse_stateful_toggles_and_inherited_background() {
+    use irc_color::Style;
+
+    // Raw IRC from other clients toggles individual flags off without `\x0f`.
+    let toggled = Text::parse(
+        "\u{02}b\u{02}\u{1d}i\u{1d}\u{1f}u\u{1f}\u{1e}s\u{1e}\u{11}m\u{11}\u{16}r\u{16}p",
+    );
+    assert_eq!(toggled.plain(), "biusmrp");
+    assert_eq!(toggled.spans[0].style, Style::new().bold());
+    assert_eq!(toggled.spans[1].style, Style::new().italic());
+    assert_eq!(toggled.spans[2].style, Style::new().underline());
+    assert_eq!(toggled.spans[3].style, Style::new().strikethrough());
+    assert_eq!(toggled.spans[4].style, Style::new().monospace());
+    assert_eq!(toggled.spans[5].style, Style::new().reverse());
+    assert_eq!(toggled.spans[6].style, Style::default());
+
+    // Foreground-only `\x03<fg>` / `\x04<hex>` preserves an active background,
+    // while bare `\x03` / `\x04` clears both colors without clearing bold.
+    let inherited_pal = Text::parse("\u{02}\u{03}04,02a\u{03}03b\u{03}c");
+    assert_eq!(inherited_pal.spans[0].style, Style::new().bold().red().on_blue());
+    assert_eq!(inherited_pal.spans[1].style, Style::new().bold().green().on_blue());
+    assert_eq!(inherited_pal.spans[2].style, Style::new().bold());
+
+    let inherited_hex = Text::parse("\u{04}FF0000,0000FFa\u{04}00FF00b\u{04}c");
+    assert_eq!(
+        inherited_hex.spans[0].style,
+        Style::new().rgb(255, 0, 0).on_rgb(0, 0, 255)
+    );
+    assert_eq!(
+        inherited_hex.spans[1].style,
+        Style::new().rgb(0, 255, 0).on_rgb(0, 0, 255)
+    );
+    assert_eq!(inherited_hex.spans[2].style, Style::default());
+}
+
+#[test]
+fn reverse_round_trip() {
+    use irc_color::Style;
+
+    let warn = Style::new().bold().reverse().grey().on_light_grey();
+    let msg = Text::with_fallback(warn, "inverted");
+    let wire = msg.to_irc_string();
+    assert!(wire.contains('\u{16}'));
+
+    let reparsed = Text::parse(&wire);
+    assert_eq!(reparsed, msg);
+}
+
+#[test]
+fn randomized_round_trip_and_wrap_invariants() {
+    use irc_color::{Span, Style};
+
+    // Simple deterministic xorshift64 PRNG so no extra dev-dependency is needed.
+    let mut seed: u64 = 0xDEAD_BEEF_CAFE_BABEu64;
+    let mut next_u32 = || -> u32 {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        (seed >> 32) as u32
+    };
+
+    let sample_fragments = [
+        "hello",
+        " ",
+        "123",
+        ",04",
+        ",FF00AA",
+        "0",
+        ",",
+        "word ",
+        "👨\u{200d}👩\u{200d}👦",
+        "é",
+        "line\r\nbreak",
+        "superlongfragwithoutspaces",
+    ];
+
+    for case in 0..300 {
+        let span_count = (next_u32() % 8 + 1) as usize;
+        let mut t = Text::new();
+
+        for _ in 0..span_count {
+            let frag = sample_fragments[(next_u32() as usize) % sample_fragments.len()];
+            let fg = match next_u32() % 4 {
+                0 => None,
+                1 | 2 => Color::from_code((next_u32() % 16) as u8).map(ColorValue::Palette),
+                _ => Some(ColorValue::Rgb(
+                    next_u32() as u8,
+                    (next_u32() >> 8) as u8,
+                    (next_u32() >> 16) as u8,
+                )),
+            };
+            let bg = match next_u32() % 4 {
+                0 | 1 => None,
+                2 => Color::from_code((next_u32() % 16) as u8).map(ColorValue::Palette),
+                _ => Some(ColorValue::Rgb(
+                    next_u32() as u8,
+                    (next_u32() >> 8) as u8,
+                    (next_u32() >> 16) as u8,
+                )),
+            };
+            let bits = next_u32();
+            let style = Style {
+                fg,
+                bg,
+                bold: bits & 1 != 0,
+                italic: bits & 2 != 0,
+                underline: bits & 4 != 0,
+                strikethrough: bits & 8 != 0,
+                monospace: bits & 16 != 0,
+                reverse: bits & 32 != 0,
+            };
+            t += Text {
+                spans: vec![Span {
+                    text: frag.to_string(),
+                    style,
+                }],
+            };
+        }
+
+        let wire = t.to_irc_string();
+        let reparsed = Text::parse(&wire);
+        assert_eq!(
+            reparsed.plain(),
+            t.plain(),
+            "plain mismatch on case {}: wire={:?}",
+            case,
+            wire
+        );
+
+        for max_bytes in [22usize, 36, 45, 120] {
+            for chunk in t.wrap(max_bytes) {
+                let cw = chunk.to_irc_string();
+                assert!(!cw.contains('\r') && !cw.contains('\n'));
+                // Only when a single grapheme + its own required setup/reset
+                // codes exceeds `max_bytes` is a 1-grapheme chunk allowed to
+                // exceed `max_bytes` (rather than tearing UTF-8 / ZWJ sequences).
+                if chunk.visible_len() > 1 {
+                    assert!(
+                        cw.len() <= max_bytes,
+                        "wrap({}) exceeded max_bytes ({} > {}): {:?}",
+                        max_bytes,
+                        cw.len(),
+                        max_bytes,
+                        cw
+                    );
+                }
+                assert_eq!(Text::parse(&cw).plain(), chunk.plain());
+            }
+        }
+    }
 }

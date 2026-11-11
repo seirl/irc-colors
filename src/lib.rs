@@ -63,7 +63,7 @@ pub enum Color {
 }
 
 impl Color {
-    pub fn code(self) -> u8 {
+    pub const fn code(self) -> u8 {
         use Color::*;
         match self {
             White => 0,
@@ -85,7 +85,7 @@ impl Color {
         }
     }
 
-    pub fn from_code(code: u8) -> Option<Color> {
+    pub const fn from_code(code: u8) -> Option<Color> {
         use Color::*;
         Some(match code {
             0 => White,
@@ -113,7 +113,7 @@ impl Color {
     /// indices as). Used internally so a palette color never has to be
     /// silently dropped when it ends up sharing a span with an RGB color —
     /// see [`ColorValue`].
-    pub fn to_rgb(self) -> (u8, u8, u8) {
+    pub const fn to_rgb(self) -> (u8, u8, u8) {
         use Color::*;
         match self {
             White => (255, 255, 255),
@@ -179,7 +179,7 @@ impl ColorValue {
 /// [`Text`] can always be serialized correctly no matter how it's sliced,
 /// concatenated, or split across multiple IRC messages — there's no
 /// "current state" to lose track of.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Style {
     pub fg: Option<ColorValue>,
     pub bg: Option<ColorValue>,
@@ -192,7 +192,7 @@ pub struct Style {
 }
 
 /// A single run of same-styled text.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Span {
     pub text: String,
     pub style: Style,
@@ -301,7 +301,7 @@ impl Style {
 /// Build one with plain strings, style them with [`Colorize`], glue pieces
 /// together with `+`, and turn the result into wire bytes with
 /// [`Text::to_irc_string`] (or just `.to_string()` / `{}` via [`Display`](fmt::Display)).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct Text {
     pub spans: Vec<Span>,
 }
@@ -322,6 +322,16 @@ impl Text {
                     style: Style::default(),
                 }],
             }
+        }
+    }
+
+    fn push_span(&mut self, span: Span) {
+        if span.text.is_empty() {
+            return;
+        }
+        match self.spans.last_mut() {
+            Some(last) if last.style == span.style => last.text.push_str(&span.text),
+            _ => self.spans.push(span),
         }
     }
 
@@ -356,11 +366,13 @@ impl Text {
     /// // "SPARTA"   -> stays blue (child wins), gains underline (union), keeps bold
     /// # let _ = msg;
     /// ```
-    pub fn with_fallback_style(mut self, fallback: Style) -> Text {
-        for span in &mut self.spans {
+    pub fn with_fallback_style(self, fallback: Style) -> Text {
+        let mut out = Text::new();
+        for mut span in self.spans {
             span.style = span.style.with_fallback(fallback);
+            out.push_span(span);
         }
-        self
+        out
     }
 
     /// Static constructor: combine several already-styled pieces under one fallback style.
@@ -373,9 +385,9 @@ impl Text {
         Self::with_fallback(style, inner)
     }
 
-    /// Serialize to raw IRC-formatted bytes (as a `String`), emitting only
-    /// the control codes needed when the style actually changes between
-    /// spans. This is what you send over the wire.
+    /// Serialize to raw IRC-formatted bytes (as a `String`), resetting with
+    /// `\x0f` and emitting the new span's codes whenever the style changes.
+    /// This is what you send over the wire.
     ///
     /// If a span's `fg`/`bg` mix a palette [`Color`] with an RGB value (only
     /// possible via [`Text::with_fallback`] composition, not the ordinary
@@ -383,88 +395,12 @@ impl Text {
     /// pair is sent in the hex form, with the palette side converted via
     /// its canonical RGB value ([`Color::to_rgb`]) rather than dropped.
     pub fn to_irc_string(&self) -> String {
-        let mut out = String::new();
+        let approx_cap: usize = self.spans.iter().map(|s| s.text.len() + 4).sum();
+        let mut out = String::with_capacity(approx_cap);
         let mut cur = Style::default();
 
         for span in &self.spans {
-            if span.style.bold != cur.bold {
-                out.push('\u{02}');
-            }
-            if span.style.italic != cur.italic {
-                out.push('\u{1d}');
-            }
-            if span.style.underline != cur.underline {
-                out.push('\u{1f}');
-            }
-            if span.style.strikethrough != cur.strikethrough {
-                out.push('\u{1e}');
-            }
-            if span.style.monospace != cur.monospace {
-                out.push('\u{11}');
-            }
-            if span.style.reverse != cur.reverse {
-                out.push('\u{16}');
-            }
-
-            if (span.style.fg, span.style.bg) != (cur.fg, cur.bg) {
-                // If the previous style had a background color, but the new style
-                // has no background color and specifies a foreground color, we must
-                // reset colors first. In IRC, \x03<fg> leaves the existing background
-                // untouched.
-                if cur.bg.is_some() && span.style.bg.is_none() && span.style.fg.is_some() {
-                    let cur_was_hex = cur.fg.is_some_and(ColorValue::is_rgb)
-                        || cur.bg.is_some_and(ColorValue::is_rgb);
-                    out.push(if cur_was_hex { '\u{04}' } else { '\u{03}' });
-                }
-
-                let use_hex = span.style.fg.is_some_and(ColorValue::is_rgb)
-                    || span.style.bg.is_some_and(ColorValue::is_rgb);
-
-                out.push(if use_hex { '\u{04}' } else { '\u{03}' });
-                let bare_reset = span.style.fg.is_none() && span.style.bg.is_none();
-
-                use std::fmt::Write;
-                if use_hex {
-                    if let Some(fg) = span.style.fg {
-                        let (r, g, b) = fg.as_rgb();
-                        let _ = write!(out, "{:02X}{:02X}{:02X}", r, g, b);
-                    }
-                    if let Some(bg) = span.style.bg {
-                        let (r, g, b) = bg.as_rgb();
-                        out.push(',');
-                        let _ = write!(out, "{:02X}{:02X}{:02X}", r, g, b);
-                    }
-                } else {
-                    if let Some(ColorValue::Palette(fg)) = span.style.fg {
-                        let _ = write!(out, "{:02}", fg.code());
-                    }
-                    if let Some(ColorValue::Palette(bg)) = span.style.bg {
-                        out.push(',');
-                        let _ = write!(out, "{:02}", bg.code());
-                    }
-                }
-
-                // Disambiguate against parser eating text into color code:
-                // 1) A bare reset followed by a digit or comma would be parsed as color.
-                // 2) A foreground-only code followed by a comma would be parsed as background.
-                // Nudge apart with a harmless bold-toggle-toggle.
-                if let Some(first) = span.text.chars().next() {
-                    let nudge = if bare_reset {
-                        first.is_ascii_digit() || first == ','
-                    } else if span.style.fg.is_some() && span.style.bg.is_none() {
-                        first == ','
-                    } else {
-                        false
-                    };
-                    if nudge {
-                        out.push('\u{02}');
-                        out.push('\u{02}');
-                    }
-                }
-            }
-
-            out.push_str(&span.text);
-            cur = span.style;
+            push_styled(&mut out, &mut cur, &span.text, span.style);
         }
 
         if cur != Style::default() {
@@ -479,8 +415,8 @@ impl Text {
     /// splitting a word in half (unless a single word alone exceeds
     /// `max_bytes`, in which case it's hard-split at a grapheme-cluster
     /// boundary — so a multi-codepoint character like an emoji or an
-    /// accented letter is never torn apart). Explicit `\n`s always force a
-    /// break.
+    /// accented letter is never torn apart). Explicit `\n`s, `\r\n`s, and
+    /// `\r`s always force a break.
     ///
     /// Because every [`Span`] carries its full resolved style (see above),
     /// each returned chunk re-serializes its own leading codes from
@@ -496,25 +432,37 @@ impl Text {
         result
     }
 
-    /// Split on literal `\n` characters into separate `Text`s (formatting
-    /// carries across the break, matching how most IRC clients expect
-    /// multi-line pastes to behave once split into separate messages).
+    /// Split on `\r\n`, `\n`, or `\r` line breaks into separate `Text`s
+    /// (formatting carries across the break, matching how most IRC clients
+    /// expect multi-line pastes to behave once split into separate messages).
     pub fn split_lines(&self) -> Vec<Text> {
         let mut lines = vec![Text::new()];
+        let mut skip_lf = false;
 
         for span in &self.spans {
-            let mut parts = span.text.split('\n').peekable();
-            while let Some(part) = parts.next() {
-                if !part.is_empty() {
-                    lines.last_mut().unwrap().spans.push(Span {
-                        text: part.to_string(),
+            let mut buf = String::new();
+            for ch in span.text.chars() {
+                if skip_lf {
+                    skip_lf = false;
+                    if ch == '\n' {
+                        continue;
+                    }
+                }
+                if ch == '\r' || ch == '\n' {
+                    lines.last_mut().unwrap().push_span(Span {
+                        text: std::mem::take(&mut buf),
                         style: span.style,
                     });
-                }
-                if parts.peek().is_some() {
                     lines.push(Text::new());
+                    skip_lf = ch == '\r';
+                } else {
+                    buf.push(ch);
                 }
             }
+            lines.last_mut().unwrap().push_span(Span {
+                text: buf,
+                style: span.style,
+            });
         }
 
         lines
@@ -529,9 +477,7 @@ impl Text {
             .iter()
             .flat_map(|s| {
                 let style = s.style;
-                s.text
-                    .graphemes(true)
-                    .map(move |g| (g, style))
+                s.text.graphemes(true).map(move |g| (g, style))
             })
             .collect()
     }
@@ -556,61 +502,38 @@ impl Text {
             return vec![Text::new()];
         }
 
-        // Group into whitespace-delimited words, each a run of (grapheme, style).
-        let mut words: Vec<Vec<(&str, Style)>> = Vec::new();
-        let mut current: Vec<(&str, Style)> = Vec::new();
-        for (g, style) in units {
-            let is_space = g == " ";
-            current.push((g, style));
-            if is_space {
-                words.push(std::mem::take(&mut current));
+        let mut lines = Vec::new();
+        let mut line = LineBuf::default();
+
+        for word in units.split_inclusive(|&(g, _)| g == " ") {
+            if line.try_push(word, max_bytes) {
+                continue;
             }
-        }
-        if !current.is_empty() {
-            words.push(current);
-        }
-
-        let mut lines: Vec<Vec<(&str, Style)>> = Vec::new();
-        let mut line: Vec<(&str, Style)> = Vec::new();
-        let mut line_len = 0usize;
-        let mut line_style = Style::default();
-
-        for word in words {
-            let (mut word_len, mut word_end_style) = word_cost(line_style, &word);
-            let mut trailing = usize::from(word_end_style != Style::default());
-
-            if !line.is_empty() && line_len + word_len + trailing > max_bytes {
-                lines.push(std::mem::take(&mut line));
-                line_len = 0;
-                line_style = Style::default();
-                (word_len, word_end_style) = word_cost(line_style, &word);
-                trailing = usize::from(word_end_style != Style::default());
-            }
-
-            if word_len + trailing > max_bytes {
-                // Doesn't fit even as its own line: hard-split it. Each
-                // resulting piece is already sized to fit on its own, so
-                // it becomes a complete line and the next word starts fresh.
-                for piece in hard_split(&word, max_bytes) {
-                    if !line.is_empty() {
-                        lines.push(std::mem::take(&mut line));
-                    }
-                    lines.push(piece);
-                    line_len = 0;
-                    line_style = Style::default();
+            if !line.units.is_empty() {
+                lines.push(line.take_line());
+                if line.try_push(word, max_bytes) {
+                    continue;
                 }
-            } else {
-                line.extend(word);
-                line_len += word_len;
-                line_style = word_end_style;
+            }
+            // Word alone exceeds `max_bytes`: hard-split grapheme-by-grapheme.
+            for &(g, style) in word {
+                if !line.try_push(&[(g, style)], max_bytes) {
+                    if !line.units.is_empty() {
+                        lines.push(line.take_line());
+                        if g == " " {
+                            continue;
+                        }
+                    }
+                    line.push_unchecked(g, style);
+                }
             }
         }
 
-        if !line.is_empty() || lines.is_empty() {
-            lines.push(line);
+        if !line.units.is_empty() || lines.is_empty() {
+            lines.push(line.take_line());
         }
 
-        lines.iter().map(|l| Text::from_units(l)).collect()
+        lines
     }
 
     /// Re-parse raw IRC-formatted text (as received from IRC) back into a
@@ -643,22 +566,24 @@ impl fmt::Display for Text {
 impl Add<Text> for Text {
     type Output = Text;
     fn add(mut self, rhs: Text) -> Text {
-        self.spans.extend(rhs.spans);
+        self += rhs;
         self
     }
 }
 
 impl Add<&str> for Text {
     type Output = Text;
-    fn add(self, rhs: &str) -> Text {
-        self + Text::raw(rhs)
+    fn add(mut self, rhs: &str) -> Text {
+        self += rhs;
+        self
     }
 }
 
 impl Add<String> for Text {
     type Output = Text;
-    fn add(self, rhs: String) -> Text {
-        self + Text::raw(rhs)
+    fn add(mut self, rhs: String) -> Text {
+        self += rhs;
+        self
     }
 }
 
@@ -680,19 +605,31 @@ impl Add<Text> for String {
 
 impl AddAssign<Text> for Text {
     fn add_assign(&mut self, rhs: Text) {
-        self.spans.extend(rhs.spans);
+        for span in rhs.spans {
+            self.push_span(span);
+        }
     }
 }
 
 impl AddAssign<&str> for Text {
     fn add_assign(&mut self, rhs: &str) {
-        *self += Text::raw(rhs);
+        if !rhs.is_empty() {
+            self.push_span(Span {
+                text: rhs.to_string(),
+                style: Style::default(),
+            });
+        }
     }
 }
 
 impl AddAssign<String> for Text {
     fn add_assign(&mut self, rhs: String) {
-        *self += Text::raw(rhs);
+        if !rhs.is_empty() {
+            self.push_span(Span {
+                text: rhs,
+                style: Style::default(),
+            });
+        }
     }
 }
 
@@ -716,11 +653,12 @@ impl AddAssign<String> for Text {
 /// ```
 pub trait Colorize: Into<Text> + Sized {
     fn styled(self, f: impl Fn(Style) -> Style) -> Text {
-        let mut t = self.into();
-        for span in t.spans.iter_mut() {
+        let mut out = Text::new();
+        for mut span in self.into().spans {
             span.style = f(span.style);
+            out.push_span(span);
         }
-        t
+        out
     }
 
     fn bold(self) -> Text {
@@ -778,6 +716,11 @@ pub trait Colorize: Into<Text> + Sized {
         self.fg(ColorValue::Rgb(r, g, b))
     }
     /// Set an RGB background color via IRC's newer hex-color code (`\x04`).
+    ///
+    /// Note that IRC's `\x04` hex-color specification does not define a
+    /// "default foreground" placeholder (unlike `\x0399,<bg>` for palette
+    /// colors), so for maximum client compatibility pair `.on_rgb(...)` with
+    /// an explicit foreground color (`.rgb(...)` or `.fg(...)`).
     fn on_rgb(self, r: u8, g: u8, b: u8) -> Text {
         self.bg(ColorValue::Rgb(r, g, b))
     }
@@ -819,120 +762,126 @@ pub trait Colorize: Into<Text> + Sized {
 impl<T: Into<Text>> Colorize for T {}
 
 // ---------------------------------------------------------------------------
-// Byte-cost accounting for wrapping, without building any strings
+// Wire emission
 // ---------------------------------------------------------------------------
 
-/// How many bytes `to_irc_string` would spend on control codes transitioning
-/// from `from` to `to`, right before a run of text starting with
-/// `next_char`. Mirrors `Text::to_irc_string`'s logic exactly (same toggles,
-/// same color-code accounting, same digit/comma disambiguation workaround)
-/// but does no allocation — used so wrapping can track a running byte
-/// budget with plain arithmetic instead of re-serializing on every word.
-fn transition_bytes(from: Style, to: Style, next_char: Option<char>) -> usize {
-    let mut n = 0;
-    if to.bold != from.bold {
-        n += 1;
+/// Emit the formatting and color codes that establish `s` starting from
+/// [`Style::default()`], right before `first_char`.
+fn emit_style(out: &mut String, s: Style, first_char: char) {
+    if s.bold {
+        out.push('\u{02}');
     }
-    if to.italic != from.italic {
-        n += 1;
+    if s.italic {
+        out.push('\u{1d}');
     }
-    if to.underline != from.underline {
-        n += 1;
+    if s.underline {
+        out.push('\u{1f}');
     }
-    if to.strikethrough != from.strikethrough {
-        n += 1;
+    if s.strikethrough {
+        out.push('\u{1e}');
     }
-    if to.monospace != from.monospace {
-        n += 1;
+    if s.monospace {
+        out.push('\u{11}');
     }
-    if to.reverse != from.reverse {
-        n += 1;
+    if s.reverse {
+        out.push('\u{16}');
     }
 
-    if (to.fg, to.bg) != (from.fg, from.bg) {
-        if from.bg.is_some() && to.bg.is_none() && to.fg.is_some() {
-            n += 1;
-        }
-        n += 1; // the \x03 or \x04 byte itself
-        let use_hex =
-            to.fg.is_some_and(ColorValue::is_rgb) || to.bg.is_some_and(ColorValue::is_rgb);
-        let bare_reset = to.fg.is_none() && to.bg.is_none();
-
-        if use_hex {
-            if to.fg.is_some() {
-                n += 6;
+    if s.fg.is_some() || s.bg.is_some() {
+        use std::fmt::Write;
+        if s.fg.is_some_and(ColorValue::is_rgb) || s.bg.is_some_and(ColorValue::is_rgb) {
+            out.push('\u{04}');
+            if let Some(fg) = s.fg {
+                let (r, g, b) = fg.as_rgb();
+                let _ = write!(out, "{:02X}{:02X}{:02X}", r, g, b);
             }
-            if to.bg.is_some() {
-                n += 1 + 6;
+            if let Some(bg) = s.bg {
+                let (r, g, b) = bg.as_rgb();
+                let _ = write!(out, ",{:02X}{:02X}{:02X}", r, g, b);
             }
         } else {
-            if matches!(to.fg, Some(ColorValue::Palette(_))) {
-                n += 2;
-            }
-            if matches!(to.bg, Some(ColorValue::Palette(_))) {
-                n += 1 + 2;
-            }
-        }
-
-        if let Some(c) = next_char {
-            let nudge = if bare_reset {
-                c.is_ascii_digit() || c == ','
-            } else if to.fg.is_some() && to.bg.is_none() {
-                c == ','
-            } else {
-                false
+            out.push('\u{03}');
+            // `99` is the codified IRC default/transparent color code,
+            // used so `<FG>` is never omitted before `,<BG>` on the wire.
+            let fg = match s.fg {
+                Some(ColorValue::Palette(c)) => c.code(),
+                None => 99,
+                Some(ColorValue::Rgb(..)) => unreachable!(),
             };
-            if nudge {
-                n += 2;
+            let _ = write!(out, "{:02}", fg);
+            if let Some(ColorValue::Palette(bg)) = s.bg {
+                let _ = write!(out, ",{:02}", bg.code());
             }
         }
-    }
 
-    n
-}
-
-/// Byte cost of appending `word` to a line whose running style is
-/// `start_style`, plus the style it leaves the line in.
-fn word_cost(start_style: Style, word: &[(&str, Style)]) -> (usize, Style) {
-    let mut len = 0;
-    let mut cur = start_style;
-    for (g, style) in word {
-        len += transition_bytes(cur, *style, g.chars().next());
-        len += g.len();
-        cur = *style;
-    }
-    (len, cur)
-}
-
-// ---------------------------------------------------------------------------
-// Hard-splitting an overlong "word" at a grapheme-cluster boundary
-// ---------------------------------------------------------------------------
-
-fn hard_split<'a>(word: &[(&'a str, Style)], max_bytes: usize) -> Vec<Vec<(&'a str, Style)>> {
-    let mut pieces = Vec::new();
-    let mut current: Vec<(&'a str, Style)> = Vec::new();
-    let mut cur_style = Style::default();
-    let mut cur_len = 0usize;
-
-    for (g, style) in word {
-        let cost = transition_bytes(cur_style, *style, g.chars().next()) + g.len();
-        let trailing = usize::from(*style != Style::default());
-
-        if !current.is_empty() && cur_len + cost + trailing > max_bytes {
-            pieces.push(std::mem::take(&mut current));
-            cur_style = Style::default();
-            cur_len = transition_bytes(cur_style, *style, g.chars().next()) + g.len();
-        } else {
-            cur_len += cost;
+        // A foreground-only color followed by `,` could have `,` + digits
+        // eaten as a background color; nudge apart with an empty bold pair.
+        if s.bg.is_none() && first_char == ',' {
+            out.push_str("\u{02}\u{02}");
         }
-        current.push((*g, *style));
-        cur_style = *style;
     }
-    if !current.is_empty() {
-        pieces.push(current);
+}
+
+fn push_styled(out: &mut String, cur: &mut Style, text: &str, style: Style) {
+    let Some(first) = text.chars().next() else {
+        return;
+    };
+    if style != *cur {
+        if *cur != Style::default() {
+            out.push('\u{0f}');
+        }
+        emit_style(out, style, first);
+        *cur = style;
+    }
+    out.push_str(text);
+}
+
+// ---------------------------------------------------------------------------
+// Incremental line buffer for wrapping (checkpoint + truncate)
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+struct LineBuf<'a> {
+    units: Vec<(&'a str, Style)>,
+    wire: String,
+    style: Style,
+}
+
+impl<'a> LineBuf<'a> {
+    /// Tentatively append `slice` onto the current line, rolling back in O(1)
+    /// via `truncate` if the resulting wire length (including any trailing
+    /// `\x0f` reset) would exceed `max_bytes`.
+    fn try_push(&mut self, slice: &[(&'a str, Style)], max_bytes: usize) -> bool {
+        let checkpoint = (self.units.len(), self.wire.len(), self.style);
+        for &(g, style) in slice {
+            push_styled(&mut self.wire, &mut self.style, g, style);
+            self.units.push((g, style));
+            if self.wire.len() + usize::from(self.style != Style::default()) > max_bytes {
+                self.units.truncate(checkpoint.0);
+                self.wire.truncate(checkpoint.1);
+                self.style = checkpoint.2;
+                return false;
+            }
+        }
+        true
     }
 
-    pieces
+    fn push_unchecked(&mut self, g: &'a str, style: Style) {
+        push_styled(&mut self.wire, &mut self.style, g, style);
+        self.units.push((g, style));
+    }
+
+    fn take_line(&mut self) -> Text {
+        let text = Text::from_units(&self.units);
+        debug_assert_eq!(
+            self.wire.len() + usize::from(self.style != Style::default()),
+            text.to_irc_string().len()
+        );
+        self.units.clear();
+        self.wire.clear();
+        self.style = Style::default();
+        text
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -940,14 +889,14 @@ fn hard_split<'a>(word: &[(&'a str, Style)], max_bytes: usize) -> Vec<Vec<(&'a s
 // ---------------------------------------------------------------------------
 
 fn parse_irc(input: &str) -> Text {
-    let mut spans = Vec::new();
+    let mut out = Text::new();
     let mut style = Style::default();
     let mut buf = String::new();
     let mut s = input;
 
-    fn flush(buf: &mut String, spans: &mut Vec<Span>, style: Style) {
+    fn flush(buf: &mut String, out: &mut Text, style: Style) {
         if !buf.is_empty() {
-            spans.push(Span {
+            out.push_span(Span {
                 text: std::mem::take(buf),
                 style,
             });
@@ -957,9 +906,10 @@ fn parse_irc(input: &str) -> Text {
     // Reads up to `max_digits` ASCII digits from the start of `s`.
     fn read_digits(s: &mut &str, max_digits: usize) -> Option<u8> {
         let count = s
-            .chars()
+            .as_bytes()
+            .iter()
             .take(max_digits)
-            .take_while(|c| c.is_ascii_digit())
+            .take_while(|b| b.is_ascii_digit())
             .count();
         if count == 0 {
             None
@@ -983,36 +933,33 @@ fn parse_irc(input: &str) -> Text {
         }
     }
 
-    // Reads a foreground (optional) and background (optional, preceded by comma) pair.
+    // Reads an optional foreground and optional `,`-prefixed background pair.
     fn read_color_pair<T>(
         s: &mut &str,
         read: impl Fn(&mut &str) -> Option<T>,
     ) -> (Option<T>, Option<T>) {
-        match read(s) {
-            Some(fg) => {
-                let bg = if s.starts_with(',') {
-                    let mut peek = &s[1..];
-                    if let Some(bg) = read(&mut peek) {
-                        *s = peek;
-                        Some(bg)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-                (Some(fg), bg)
+        let fg = read(s);
+        let bg = s.strip_prefix(',').and_then(|mut rest| {
+            let bg = read(&mut rest)?;
+            *s = rest;
+            Some(bg)
+        });
+        (fg, bg)
+    }
+
+    fn apply_color_pair<T>(
+        style: &mut Style,
+        (fg, bg): (Option<T>, Option<T>),
+        to_color: impl Fn(T) -> Option<ColorValue>,
+    ) {
+        if let Some(fg) = fg {
+            style.fg = to_color(fg);
+            if let Some(bg) = bg {
+                style.bg = to_color(bg);
             }
-            None => {
-                if s.starts_with(',') {
-                    let mut peek = &s[1..];
-                    if let Some(bg) = read(&mut peek) {
-                        *s = peek;
-                        return (None, Some(bg));
-                    }
-                }
-                (None, None)
-            }
+        } else {
+            style.fg = None;
+            style.bg = bg.and_then(to_color);
         }
     }
 
@@ -1021,7 +968,7 @@ fn parse_irc(input: &str) -> Text {
         match c {
             '\u{02}' | '\u{1d}' | '\u{1f}' | '\u{1e}' | '\u{11}' | '\u{16}' | '\u{0f}'
             | '\u{03}' | '\u{04}' => {
-                flush(&mut buf, &mut spans, style);
+                flush(&mut buf, &mut out, style);
                 match c {
                     '\u{02}' => style.bold = !style.bold,
                     '\u{1d}' => style.italic = !style.italic,
@@ -1031,38 +978,24 @@ fn parse_irc(input: &str) -> Text {
                     '\u{16}' => style.reverse = !style.reverse,
                     '\u{0f}' => style = Style::default(),
                     '\u{03}' => {
-                        let (fg, bg) = read_color_pair(&mut s, |s| read_digits(s, 2));
-                        if let Some(fg_code) = fg {
-                            style.fg = Color::from_code(fg_code).map(ColorValue::Palette);
-                            if let Some(bg_code) = bg {
-                                style.bg = Color::from_code(bg_code).map(ColorValue::Palette);
-                            }
-                        } else {
-                            style.fg = None;
-                            style.bg = bg.and_then(Color::from_code).map(ColorValue::Palette);
-                        }
+                        let pair = read_color_pair(&mut s, |s| read_digits(s, 2));
+                        apply_color_pair(&mut style, pair, |c| {
+                            Color::from_code(c).map(ColorValue::Palette)
+                        });
                     }
                     '\u{04}' => {
-                        let (fg, bg) = read_color_pair(&mut s, read_hex6);
-                        if let Some((r, g, b)) = fg {
-                            style.fg = Some(ColorValue::Rgb(r, g, b));
-                            if let Some((r, g, b)) = bg {
-                                style.bg = Some(ColorValue::Rgb(r, g, b));
-                            }
-                        } else {
-                            style.fg = None;
-                            style.bg = bg.map(|(r, g, b)| ColorValue::Rgb(r, g, b));
-                        }
+                        let pair = read_color_pair(&mut s, read_hex6);
+                        apply_color_pair(&mut style, pair, |(r, g, b)| {
+                            Some(ColorValue::Rgb(r, g, b))
+                        });
                     }
                     _ => unreachable!(),
                 }
             }
-            _ => {
-                buf.push(c);
-            }
+            _ => buf.push(c),
         }
     }
-    flush(&mut buf, &mut spans, style);
+    flush(&mut buf, &mut out, style);
 
-    Text { spans }
+    out
 }
