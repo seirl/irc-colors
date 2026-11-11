@@ -252,14 +252,23 @@ fn wrap_scales_linearly_not_quadratically() {
     };
 
     let small = make(500);
-    let t0 = Instant::now();
-    let _ = small.wrap(400);
-    let small_time = t0.elapsed();
-
     let big = make(4000); // 8x the input
-    let t0 = Instant::now();
-    let _ = big.wrap(400);
-    let big_time = t0.elapsed();
+
+    // Warm up allocator/caches and take min of 3 runs to avoid OS scheduling jitter.
+    let _ = small.wrap(400);
+    let min_elapsed = |t: &Text| {
+        (0..3)
+            .map(|_| {
+                let t0 = Instant::now();
+                let _ = t.wrap(400);
+                t0.elapsed()
+            })
+            .min()
+            .unwrap()
+    };
+
+    let small_time = min_elapsed(&small);
+    let big_time = min_elapsed(&big);
 
     // Quadratic growth would be ~64x; allow generous slack but catch a real regression.
     assert!(
@@ -495,7 +504,7 @@ fn wrap_consumes_break_point_whitespace_and_preserves_words() {
     assert_eq!(lead2, vec!["a"]);
 
     let all_spaces = Text::raw("      ").wrap(4);
-    assert_eq!(all_spaces, vec![Text::new()]);
+    assert!(all_spaces.is_empty());
 
     // Multi-span words stay glued together across wraps instead of splitting at span boundaries.
     let multi_span = "prefix " + "hel".red() + "lo".blue();
@@ -763,19 +772,13 @@ fn randomized_round_trip_and_wrap_invariants() {
             let any_rgb = matches!(s.fg, Some(ColorValue::Rgb(..)))
                 || matches!(s.bg, Some(ColorValue::Rgb(..)));
             if any_rgb {
-                s.fg = s.fg.map(|c| match c {
-                    ColorValue::Palette(p) => {
-                        let (r, g, b) = p.to_rgb();
-                        ColorValue::Rgb(r, g, b)
-                    }
-                    rgb => rgb,
+                s.fg = s.fg.map(|c| {
+                    let (r, g, b) = c.to_rgb();
+                    ColorValue::Rgb(r, g, b)
                 });
-                s.bg = s.bg.map(|c| match c {
-                    ColorValue::Palette(p) => {
-                        let (r, g, b) = p.to_rgb();
-                        ColorValue::Rgb(r, g, b)
-                    }
-                    rgb => rgb,
+                s.bg = s.bg.map(|c| {
+                    let (r, g, b) = c.to_rgb();
+                    ColorValue::Rgb(r, g, b)
                 });
             }
             s
@@ -793,6 +796,7 @@ fn randomized_round_trip_and_wrap_invariants() {
 
         for max_bytes in [22usize, 36, 45, 120] {
             for chunk in t.wrap(max_bytes) {
+                assert!(!chunk.is_empty());
                 let cw = chunk.to_irc_string();
                 assert!(!cw.contains('\r') && !cw.contains('\n'));
                 // Only when a single grapheme + its own required setup/reset
@@ -818,7 +822,8 @@ fn randomized_round_trip_and_wrap_invariants() {
 fn spans_are_canonical_and_strip_embedded_format_bytes() {
     use irc_colors::{Span, Style};
 
-    assert!(Text::new().is_empty());
+    const EMPTY: Text = Text::new();
+    assert!(EMPTY.is_empty());
     assert!(Text::raw("").is_empty());
     assert!(Text::from(Span::new("", Style::new().red())).is_empty());
     assert!(Text::raw("\u{02}\u{0f}").is_empty());
@@ -839,4 +844,22 @@ fn spans_are_canonical_and_strip_embedded_format_bytes() {
     let msg = ("Alert: " + Text::raw(untrusted)).red();
     assert_eq!(msg.plain(), "Alert: safenot-plainnot-bold");
     assert_eq!(Text::parse(&msg.to_irc_string()), msg);
+}
+
+#[test]
+fn wrap_omits_empty_chunks() {
+    assert!(Text::new().wrap(400).is_empty());
+    assert!(Text::raw("").wrap(400).is_empty());
+    assert!(Text::raw("\n\r\n\r").wrap(400).is_empty());
+
+    let trailing_newline = "hello\n\nworld\r\n".bold().red().wrap(400);
+    let plains: Vec<String> = trailing_newline.iter().map(|c| c.plain()).collect();
+    assert_eq!(plains, vec!["hello", "world"]);
+    for c in &trailing_newline {
+        assert!(!c.is_empty());
+    }
+
+    // Spaces that actually fit within max_bytes remain a valid non-empty line.
+    let fitting_spaces = Text::raw("   ").wrap(10);
+    assert_eq!(fitting_spaces, vec![Text::raw("   ")]);
 }
