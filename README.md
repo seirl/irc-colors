@@ -1,4 +1,4 @@
-# irc-color
+# irc-colors
 
 Write IRC-formatted colored text in Rust, the fun way.
 
@@ -7,7 +7,7 @@ Implements the formatting control codes and color table from [IRC Formatting](ht
 ## Usage
 
 ```rust
-use irc_color::Colorize;
+use irc_colors::Colorize;
 
 let msg = "Hello".bold().red() + " world".underline().blue();
 

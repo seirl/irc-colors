@@ -1,4 +1,4 @@
-use irc_color::{Color, ColorValue, Colorize, Text};
+use irc_colors::{Color, ColorValue, Colorize, Text};
 
 #[test]
 fn chain_and_concat() {
@@ -16,7 +16,7 @@ fn later_call_wins() {
 
 #[test]
 fn fallback_style_child_wins_bg_inherits_formats_union() {
-    use irc_color::Style;
+    use irc_colors::Style;
     let inner = "SPARTA".bold().blue();
     let theme = Style::new().red().underline();
     let msg = ("This is " + inner.clone()).with_fallback_style(theme);
@@ -189,7 +189,7 @@ fn parse_supports_background_only_color_spec() {
 
 #[test]
 fn hex_and_palette_mixed_in_one_span_keeps_both_colors() {
-    use irc_color::Style;
+    use irc_colors::Style;
     // Only reachable via fallback style composition, not the ordinary builder.
     let base = "text".red(); // palette fg only
     let merged = base.with_fallback_style(Style::new().on_rgb(10, 20, 30));
@@ -545,7 +545,7 @@ fn wrap_consumes_break_point_whitespace_and_preserves_words() {
 
 #[test]
 fn crlf_and_cr_are_split_cleanly_including_across_spans() {
-    use irc_color::{Span, Style};
+    use irc_colors::{Span, Style};
 
     let msg = "line1\r\nline2\rline3\nline4".bold().red();
     let lines = msg.split_lines();
@@ -581,7 +581,7 @@ fn crlf_and_cr_are_split_cleanly_including_across_spans() {
 
 #[test]
 fn empty_spans_do_not_break_digit_disambiguation() {
-    use irc_color::{Span, Style};
+    use irc_colors::{Span, Style};
     let tricky: Text = [
         Span::new("hi", Style::new().red()),
         Span::new("", Style::default()),
@@ -615,7 +615,7 @@ fn style_transitions_reset_with_x0f() {
 
 #[test]
 fn parse_stateful_toggles_and_inherited_background() {
-    use irc_color::Style;
+    use irc_colors::Style;
 
     // Raw IRC from other clients toggles individual flags off without `\x0f`.
     let toggled = Text::parse(
@@ -657,7 +657,7 @@ fn parse_stateful_toggles_and_inherited_background() {
 
 #[test]
 fn reverse_round_trip() {
-    use irc_color::Style;
+    use irc_colors::Style;
 
     let direct = "inverted".reverse();
     assert_eq!(direct.to_irc_string(), "\u{16}inverted\u{0f}");
@@ -693,7 +693,7 @@ fn visible_len_counts_grapheme_clusters() {
 
 #[test]
 fn randomized_round_trip_and_wrap_invariants() {
-    use irc_color::{Span, Style};
+    use irc_colors::{Span, Style};
 
     // Simple deterministic xorshift64 PRNG so no extra dev-dependency is needed.
     let mut seed: u64 = 0xDEAD_BEEF_CAFE_BABEu64;
@@ -816,7 +816,7 @@ fn randomized_round_trip_and_wrap_invariants() {
 
 #[test]
 fn spans_are_canonical_and_strip_embedded_format_bytes() {
-    use irc_color::{Span, Style};
+    use irc_colors::{Span, Style};
 
     assert!(Text::new().is_empty());
     assert!(Text::raw("").is_empty());

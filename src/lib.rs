@@ -1,4 +1,4 @@
-//! `irc-color` — write IRC-formatted colored text, the fun way.
+//! `irc-colors` — write IRC-formatted colored text, the fun way.
 //!
 //! Implements the formatting characters and color table described in
 //! [IRC Formatting](https://modern.ircdocs.horse/formatting) (the de facto
@@ -8,7 +8,7 @@
 //! is a historical name, not an accurate description of scope.
 //!
 //! ```
-//! use irc_color::Colorize;
+//! use irc_colors::Colorize;
 //!
 //! let msg = "Hello".bold().red() + " world".underline().blue();
 //!
@@ -414,7 +414,7 @@ impl Text {
     /// usually more direct, but it's handy for composing pre-built chunks.
     ///
     /// ```
-    /// use irc_color::{Text, Style, Colorize};
+    /// use irc_colors::{Text, Style, Colorize};
     /// let inner = "SPARTA".bold().blue();
     /// let msg = ("This is " + inner).with_fallback_style(Style::new().red().underline());
     /// // "This is " -> red + underline
@@ -729,7 +729,7 @@ impl AddAssign<Span> for Text {
 /// from a normal builder.
 ///
 /// ```
-/// use irc_color::Colorize;
+/// use irc_colors::Colorize;
 /// let a = "hello".bold().red();
 /// let b = "warning".on_yellow().black();
 /// let c = a + " " + b;

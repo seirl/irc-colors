@@ -3,7 +3,7 @@
 version = 4
 
 [[package]]
-name = "irc-color"
+name = "irc-colors"
 version = "0.1.0"
 dependencies = [
  "unicode-segmentation",
