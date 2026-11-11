@@ -380,11 +380,6 @@ impl Text {
         inner.into().with_fallback_style(fallback)
     }
 
-    #[deprecated(note = "renamed to with_fallback / with_fallback_style to avoid confusion with line-wrapping")]
-    pub fn wrap_style(style: Style, inner: impl Into<Text>) -> Text {
-        Self::with_fallback(style, inner)
-    }
-
     /// Serialize to raw IRC-formatted bytes (as a `String`), resetting with
     /// `\x0f` and emitting the new span's codes whenever the style changes.
     /// This is what you send over the wire.
