@@ -33,6 +33,7 @@
 
 extern crate alloc;
 
+use alloc::borrow::Cow;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -361,7 +362,7 @@ impl Text {
     /// surrounding spans on the wire; use [`Text::parse`] to interpret
     /// wire-formatted IRC strings.
     pub fn raw(s: impl Into<String>) -> Self {
-        Text::from(Span::new(s, Style::default()))
+        Text::from(s.into())
     }
 
     /// The canonical sequence of non-empty, style-coalesced [`Span`]s.
@@ -379,37 +380,31 @@ impl Text {
         self.spans.is_empty()
     }
 
-    fn push_str(&mut self, text: &str, style: Style) {
-        for part in text.split(is_format_char) {
-            self.push_clean_str(part, style);
+    fn push<'a>(&mut self, text: impl Into<Cow<'a, str>>, style: Style) {
+        match text.into() {
+            Cow::Borrowed(s) => {
+                for part in s.split(is_format_char) {
+                    self.push_clean(part, style);
+                }
+            }
+            Cow::Owned(mut s) => {
+                s.retain(|c| !is_format_char(c));
+                self.push_clean(s, style);
+            }
         }
     }
 
-    fn push_span(&mut self, mut span: Span) {
-        span.text.retain(|c| !is_format_char(c));
-        self.push_clean_span(span);
-    }
-
-    fn push_clean_str(&mut self, text: &str, style: Style) {
+    fn push_clean<'a>(&mut self, text: impl Into<Cow<'a, str>>, style: Style) {
+        let text = text.into();
         if text.is_empty() {
             return;
         }
         match self.spans.last_mut() {
-            Some(last) if last.style == style => last.text.push_str(text),
+            Some(last) if last.style == style => last.text.push_str(&text),
             _ => self.spans.push(Span {
-                text: String::from(text),
+                text: text.into_owned(),
                 style,
             }),
-        }
-    }
-
-    fn push_clean_span(&mut self, span: Span) {
-        if span.text.is_empty() {
-            return;
-        }
-        match self.spans.last_mut() {
-            Some(last) if last.style == span.style => last.text.push_str(&span.text),
-            _ => self.spans.push(span),
         }
     }
 
@@ -478,45 +473,46 @@ impl Text {
     /// scratch — so styling is preserved correctly across message
     /// boundaries with no extra bookkeeping needed on your end.
     pub fn wrap(&self, max_bytes: usize) -> Vec<Text> {
-        if self.is_empty() {
-            return Vec::new();
+        let mut lines = Vec::new();
+        if self.spans.iter().any(|s| s.text.contains(['\r', '\n'])) {
+            for line in self.split_lines() {
+                Self::wrap_line(Cow::Owned(line), max_bytes, &mut lines);
+            }
+        } else {
+            Self::wrap_line(Cow::Borrowed(self), max_bytes, &mut lines);
         }
-        if !self.spans.iter().any(|s| s.text.contains(['\r', '\n'])) && self.wire_len() <= max_bytes
-        {
-            return vec![self.clone()];
+        lines
+    }
+
+    fn wrap_line(text: Cow<'_, Text>, max_bytes: usize, lines: &mut Vec<Text>) {
+        if text.is_empty() {
+            return;
+        }
+        if text.wire_len() <= max_bytes {
+            lines.push(text.into_owned());
+            return;
         }
 
         // Stream `(grapheme cluster, style)` pairs one `(spaces, word)` token
         // at a time so multi-codepoint emoji / combining accents are never torn
         // apart and multi-span words stay glued together without upfront-allocating
         // a buffer for the entire message.
-        let mut iter = self
+        let mut iter = text
             .spans
             .iter()
             .flat_map(|s| s.text.graphemes(true).map(move |g| (g, s.style)))
             .peekable();
 
-        let mut lines = Vec::new();
         let mut line = LineBuf::default();
         let mut token = Vec::new();
 
         while iter.peek().is_some() {
-            if let Some((g, _)) = iter.next_if(|&(g, _)| matches!(g, "\r" | "\n" | "\r\n")) {
-                if g == "\r" {
-                    iter.next_if(|&(next, _)| next == "\n");
-                }
-                if !line.is_empty() {
-                    lines.push(line.take_line());
-                }
-                continue;
-            }
-
             token.clear();
             while let Some(u) = iter.next_if(|&(g, _)| g == " ") {
                 token.push(u);
             }
             let word_start = token.len();
-            while let Some(u) = iter.next_if(|&(g, _)| !matches!(g, " " | "\r" | "\n" | "\r\n")) {
+            while let Some(u) = iter.next_if(|&(g, _)| g != " ") {
                 token.push(u);
             }
 
@@ -547,8 +543,6 @@ impl Text {
         if !line.is_empty() {
             lines.push(line.take_line());
         }
-
-        lines
     }
 
     /// Split on `\r\n`, `\n`, or `\r` line breaks into separate `Text`s
@@ -573,7 +567,7 @@ impl Text {
                 skip_lf = false;
             }
             while let Some(pos) = rest.find(['\r', '\n']) {
-                cur.push_clean_str(&rest[..pos], span.style);
+                cur.push_clean(&rest[..pos], span.style);
                 lines.push(core::mem::take(&mut cur));
                 let after = &rest[pos + 1..];
                 rest = if rest.as_bytes()[pos] == b'\r' {
@@ -583,7 +577,7 @@ impl Text {
                     after
                 };
             }
-            cur.push_clean_str(rest, span.style);
+            cur.push_clean(rest, span.style);
         }
         lines.push(cur);
 
@@ -602,29 +596,25 @@ impl Text {
 
 impl From<&str> for Text {
     fn from(s: &str) -> Self {
-        let mut out = Text::new();
-        out.push_str(s, Style::default());
-        out
+        Text::new() + s
     }
 }
 
 impl From<&String> for Text {
     fn from(s: &String) -> Self {
-        Text::from(s.as_str())
+        Text::new() + s
     }
 }
 
 impl From<String> for Text {
     fn from(s: String) -> Self {
-        Text::raw(s)
+        Text::new() + s
     }
 }
 
 impl From<Span> for Text {
     fn from(span: Span) -> Self {
-        let mut out = Text::new();
-        out.push_span(span);
-        out
+        Text::new() + span
     }
 }
 
@@ -714,28 +704,28 @@ impl Add<&Text> for &str {
 impl Add<Text> for &String {
     type Output = Text;
     fn add(self, rhs: Text) -> Text {
-        Text::from(self.as_str()) + rhs
+        Text::from(self) + rhs
     }
 }
 
 impl Add<&Text> for &String {
     type Output = Text;
     fn add(self, rhs: &Text) -> Text {
-        Text::from(self.as_str()) + rhs
+        Text::from(self) + rhs
     }
 }
 
 impl Add<Text> for String {
     type Output = Text;
     fn add(self, rhs: Text) -> Text {
-        Text::raw(self) + rhs
+        Text::from(self) + rhs
     }
 }
 
 impl Add<&Text> for String {
     type Output = Text;
     fn add(self, rhs: &Text) -> Text {
-        Text::raw(self) + rhs
+        Text::from(self) + rhs
     }
 }
 
@@ -744,7 +734,7 @@ impl Add<&Text> for String {
 impl AddAssign<Text> for Text {
     fn add_assign(&mut self, rhs: Text) {
         for span in rhs.spans {
-            self.push_clean_span(span);
+            self.push_clean(span.text, span.style);
         }
     }
 }
@@ -752,32 +742,32 @@ impl AddAssign<Text> for Text {
 impl AddAssign<&Text> for Text {
     fn add_assign(&mut self, rhs: &Text) {
         for span in &rhs.spans {
-            self.push_clean_str(&span.text, span.style);
+            self.push_clean(&span.text, span.style);
         }
     }
 }
 
 impl AddAssign<&str> for Text {
     fn add_assign(&mut self, rhs: &str) {
-        self.push_str(rhs, Style::default());
+        self.push(rhs, Style::default());
     }
 }
 
 impl AddAssign<&String> for Text {
     fn add_assign(&mut self, rhs: &String) {
-        self.push_str(rhs.as_str(), Style::default());
+        self.push(rhs, Style::default());
     }
 }
 
 impl AddAssign<String> for Text {
     fn add_assign(&mut self, rhs: String) {
-        self.push_span(Span::new(rhs, Style::default()));
+        self.push(rhs, Style::default());
     }
 }
 
 impl AddAssign<Span> for Text {
     fn add_assign(&mut self, rhs: Span) {
-        self.push_span(rhs);
+        self.push(rhs.text, rhs.style);
     }
 }
 
@@ -1046,14 +1036,14 @@ impl LineBuf {
         self.wire = wire;
         self.style = style;
         for &(g, s) in slice {
-            self.text.push_clean_str(g, s);
+            self.text.push_clean(g, s);
         }
         true
     }
 
     fn push_unchecked(&mut self, g: &str, style: Style) {
         let _ = push_styled(&mut self.wire, &mut self.style, g, style);
-        self.text.push_clean_str(g, style);
+        self.text.push_clean(g, style);
     }
 
     fn take_line(&mut self) -> Text {
@@ -1095,6 +1085,8 @@ fn parse_irc(input: &str) -> Text {
         Some(Some(ColorValue::Rgb(r, g, b)))
     }
 
+    // Outer `Option`: whether a color token was present; inner `Option`: channel
+    // value (`None` for palette reset code `99`).
     fn apply_color(
         s: &mut &str,
         style: &mut Style,
@@ -1110,17 +1102,13 @@ fn parse_irc(input: &str) -> Text {
             style.fg = None;
             style.bg = None;
         } else {
-            if let Some(fg) = fg {
-                style.fg = fg;
-            }
-            if let Some(bg) = bg {
-                style.bg = bg;
-            }
+            style.fg = fg.unwrap_or(style.fg);
+            style.bg = bg.unwrap_or(style.bg);
         }
     }
 
     while let Some(pos) = s.find(is_format_char) {
-        out.push_clean_str(&s[..pos], style);
+        out.push_clean(&s[..pos], style);
         let c = s.as_bytes()[pos] as char;
         s = &s[pos + 1..];
         match c {
@@ -1136,7 +1124,7 @@ fn parse_irc(input: &str) -> Text {
             _ => unreachable!(),
         }
     }
-    out.push_clean_str(s, style);
+    out.push_clean(s, style);
 
     out
 }
