@@ -133,9 +133,84 @@ impl Color {
     }
 }
 
-/// Either a palette [`Color`] (the classic 16-color set, sent with the
-/// `\x03` code) or a 24-bit RGB value (sent with the newer `\x04` hex-color
-/// code from [IRC Formatting](https://modern.ircdocs.horse/formatting#hex-color)).
+/// An extended IRC palette color (codes `16..=98`), per the
+/// [IRC Formatting extended color table](https://modern.ircdocs.horse/formatting#colors-16-98):
+/// a 72-color hue/lightness grid (`16..=87`) followed by an 11-step grayscale
+/// ramp (`88..=98`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ExtendedColor(u8);
+
+#[rustfmt::skip]
+const EXTENDED_RGB: [(u8, u8, u8); 83] = [
+    // 16..=27
+    (0x47, 0x00, 0x00), (0x47, 0x21, 0x00), (0x47, 0x47, 0x00), (0x32, 0x47, 0x00),
+    (0x00, 0x47, 0x00), (0x00, 0x47, 0x2c), (0x00, 0x47, 0x47), (0x00, 0x27, 0x47),
+    (0x00, 0x00, 0x47), (0x2e, 0x00, 0x47), (0x47, 0x00, 0x47), (0x47, 0x00, 0x2a),
+    // 28..=39
+    (0x74, 0x00, 0x00), (0x74, 0x3a, 0x00), (0x74, 0x74, 0x00), (0x51, 0x74, 0x00),
+    (0x00, 0x74, 0x00), (0x00, 0x74, 0x49), (0x00, 0x74, 0x74), (0x00, 0x40, 0x74),
+    (0x00, 0x00, 0x74), (0x4b, 0x00, 0x74), (0x74, 0x00, 0x74), (0x74, 0x00, 0x45),
+    // 40..=51
+    (0xb5, 0x00, 0x00), (0xb5, 0x63, 0x00), (0xb5, 0xb5, 0x00), (0x7d, 0xb5, 0x00),
+    (0x00, 0xb5, 0x00), (0x00, 0xb5, 0x71), (0x00, 0xb5, 0xb5), (0x00, 0x63, 0xb5),
+    (0x00, 0x00, 0xb5), (0x75, 0x00, 0xb5), (0xb5, 0x00, 0xb5), (0xb5, 0x00, 0x6b),
+    // 52..=63
+    (0xff, 0x00, 0x00), (0xff, 0x8c, 0x00), (0xff, 0xff, 0x00), (0xb2, 0xff, 0x00),
+    (0x00, 0xff, 0x00), (0x00, 0xff, 0xa0), (0x00, 0xff, 0xff), (0x00, 0x8c, 0xff),
+    (0x00, 0x00, 0xff), (0xa5, 0x00, 0xff), (0xff, 0x00, 0xff), (0xff, 0x00, 0x98),
+    // 64..=75
+    (0xff, 0x59, 0x59), (0xff, 0xb4, 0x59), (0xff, 0xff, 0x71), (0xcf, 0xff, 0x60),
+    (0x6f, 0xff, 0x6f), (0x65, 0xff, 0xc9), (0x6d, 0xff, 0xff), (0x59, 0xb4, 0xff),
+    (0x59, 0x59, 0xff), (0xc4, 0x59, 0xff), (0xff, 0x66, 0xff), (0xff, 0x59, 0xbc),
+    // 76..=87
+    (0xff, 0x9c, 0x9c), (0xff, 0xd3, 0x9c), (0xff, 0xff, 0x9c), (0xe2, 0xff, 0x9c),
+    (0x9c, 0xff, 0x9c), (0x9c, 0xff, 0xdb), (0x9c, 0xff, 0xff), (0x9c, 0xd3, 0xff),
+    (0x9c, 0x9c, 0xff), (0xdc, 0x9c, 0xff), (0xff, 0x9c, 0xff), (0xff, 0x94, 0xd3),
+    // 88..=98 (grayscale)
+    (0x00, 0x00, 0x00), (0x13, 0x13, 0x13), (0x28, 0x28, 0x28), (0x36, 0x36, 0x36),
+    (0x4d, 0x4d, 0x4d), (0x65, 0x65, 0x65), (0x81, 0x81, 0x81), (0x9f, 0x9f, 0x9f),
+    (0xbc, 0xbc, 0xbc), (0xe2, 0xe2, 0xe2), (0xff, 0xff, 0xff),
+];
+
+impl ExtendedColor {
+    pub const MIN: u8 = 16;
+    pub const MAX: u8 = 98;
+
+    /// All 83 extended palette colors in code order (`16..=98`).
+    pub const ALL: [ExtendedColor; 83] = {
+        let mut arr = [ExtendedColor(Self::MIN); 83];
+        let mut i = 0;
+        while i < 83 {
+            arr[i] = ExtendedColor(Self::MIN + i as u8);
+            i += 1;
+        }
+        arr
+    };
+
+    /// Construct an extended color if `code` is in `16..=98`.
+    pub const fn new(code: u8) -> Option<Self> {
+        if code >= Self::MIN && code <= Self::MAX {
+            Some(Self(code))
+        } else {
+            None
+        }
+    }
+
+    pub const fn code(self) -> u8 {
+        self.0
+    }
+
+    /// Reference `(r, g, b)` value from the
+    /// [IRC Formatting 16–98 color table](https://modern.ircdocs.horse/formatting#colors-16-98).
+    pub const fn to_rgb(self) -> (u8, u8, u8) {
+        EXTENDED_RGB[(self.0 - Self::MIN) as usize]
+    }
+}
+
+/// A standard 16-color palette [`Color`] (`0..=15`, sent with `\x03`), an
+/// [`ExtendedColor`] (`16..=98`, also sent with `\x03`), or a 24-bit RGB value
+/// (sent with the newer `\x04` hex-color code from
+/// [IRC Formatting](https://modern.ircdocs.horse/formatting#hex-color)).
 ///
 /// Support for `\x04` varies by client: clients that recognize `\x04` without
 /// rendering 24-bit color can strip standard `\x04RRGGBB` and
@@ -148,12 +223,19 @@ impl Color {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ColorValue {
     Palette(Color),
+    Extended(ExtendedColor),
     Rgb(u8, u8, u8),
 }
 
 impl From<Color> for ColorValue {
     fn from(c: Color) -> Self {
         ColorValue::Palette(c)
+    }
+}
+
+impl From<ExtendedColor> for ColorValue {
+    fn from(c: ExtendedColor) -> Self {
+        ColorValue::Extended(c)
     }
 }
 
@@ -164,12 +246,35 @@ impl From<(u8, u8, u8)> for ColorValue {
 }
 
 impl ColorValue {
-    /// This color's RGB `(r, g, b)` value, converting a palette [`Color`] via
-    /// its canonical [`Color::to_rgb`] mapping if needed.
+    /// Construct a palette or extended color from any IRC `\x03` code in `0..=98`
+    /// (`0..=15` -> [`ColorValue::Palette`], `16..=98` -> [`ColorValue::Extended`],
+    /// `99..=u8::MAX` -> `None`).
+    pub const fn from_code(code: u8) -> Option<Self> {
+        if let Some(c) = Color::from_code(code) {
+            Some(ColorValue::Palette(c))
+        } else if let Some(e) = ExtendedColor::new(code) {
+            Some(ColorValue::Extended(e))
+        } else {
+            None
+        }
+    }
+
+    /// The `\x03` palette index (`0..=98`), or `None` for 24-bit [`ColorValue::Rgb`].
+    pub const fn code(self) -> Option<u8> {
+        match self {
+            ColorValue::Palette(c) => Some(c.code()),
+            ColorValue::Extended(e) => Some(e.code()),
+            ColorValue::Rgb(..) => None,
+        }
+    }
+
+    /// This color's RGB `(r, g, b)` value, converting a palette or extended
+    /// color via its canonical RGB mapping if needed.
     pub const fn to_rgb(self) -> (u8, u8, u8) {
         match self {
-            ColorValue::Rgb(r, g, b) => (r, g, b),
             ColorValue::Palette(c) => c.to_rgb(),
+            ColorValue::Extended(e) => e.to_rgb(),
+            ColorValue::Rgb(r, g, b) => (r, g, b),
         }
     }
 }
@@ -258,6 +363,14 @@ impl Style {
     }
     pub fn bg(mut self, c: impl Into<ColorValue>) -> Self {
         self.bg = Some(c.into());
+        self
+    }
+    pub const fn extended(mut self, c: ExtendedColor) -> Self {
+        self.fg = Some(ColorValue::Extended(c));
+        self
+    }
+    pub const fn on_extended(mut self, c: ExtendedColor) -> Self {
+        self.bg = Some(ColorValue::Extended(c));
         self
     }
     pub const fn rgb(mut self, r: u8, g: u8, b: u8) -> Self {
@@ -462,11 +575,10 @@ impl Text {
     /// verbatim; use [`Text::wrap`] or [`Text::split_lines`] to split
     /// multi-line text into frame-safe IRC messages).
     ///
-    /// If a span's `fg`/`bg` mix a palette [`Color`] with an RGB value (for
-    /// example `"x".red().on_rgb(1, 2, 3)`), both are still rendered
+    /// If a span's `fg`/`bg` mix a `\x03` palette/extended color with an RGB
+    /// value (for example `"x".red().on_rgb(1, 2, 3)`), both are still rendered
     /// correctly: the whole pair is sent in `\x04` hex form, with the palette
-    /// side converted via its canonical RGB value ([`Color::to_rgb`]) rather
-    /// than dropped.
+    /// side converted via [`ColorValue::to_rgb`] rather than dropped.
     pub fn to_irc_string(&self) -> String {
         let mut out = String::with_capacity(self.wire_len());
         let _ = self.write_irc(&mut out);
@@ -665,10 +777,11 @@ impl Text {
     /// Re-parse raw IRC-formatted text (as received from IRC) back into a
     /// styled [`Text`], for e.g. relaying or re-wrapping someone else's message.
     ///
-    /// Palette color code `99` (and any non-`0..=15` palette index) clears that
-    /// channel back to the default color. Per the `\x03[<fg>[,<bg>]]` grammar,
-    /// `,<bg>` is only parsed when `<fg>` digits are present (use `\x0399,<bg>`
-    /// for default foreground), so a bare `\x03` color reset before `,digits`
+    /// For `\x03` color codes, `0..=15` map to [`ColorValue::Palette`],
+    /// `16..=98` map to [`ColorValue::Extended`], and `99` clears that channel
+    /// back to the default color. Per the `\x03[<fg>[,<bg>]]` grammar, `,<bg>`
+    /// is only parsed when `<fg>` digits are present (use `\x0399,<bg>` for
+    /// default foreground), so a bare `\x03` color reset before `,digits`
     /// (e.g. `\x0304$1\x03,500`) never swallows text; for `\x04` hex colors,
     /// `\x04,<hex>` updates `bg` while preserving any active `fg`.
     pub fn parse(input: &str) -> Text {
@@ -1065,21 +1178,19 @@ fn emit_style(out: &mut impl fmt::Write, s: Style, starts_with_comma: bool) -> f
     emit_toggles(out, Style::default(), s)?;
 
     // `99` is the codified IRC default/transparent color code, used so `<FG>`
-    // is never omitted before `,<BG>` on the wire for palette colors.
-    match (s.fg, s.bg) {
-        (None, None) => {}
-        (Some(ColorValue::Palette(fg)), None) => write!(out, "{CTRL_COLOR}{:02}", fg.code())?,
-        (None, Some(ColorValue::Palette(bg))) => write!(out, "{CTRL_COLOR}99,{:02}", bg.code())?,
-        (Some(ColorValue::Palette(fg)), Some(ColorValue::Palette(bg))) => {
-            write!(out, "{CTRL_COLOR}{:02},{:02}", fg.code(), bg.code())?;
-        }
-        (fg, bg) => {
+    // is never omitted before `,<BG>` on the wire for `\x03` palette/extended colors.
+    match (s.fg.and_then(ColorValue::code), s.bg.and_then(ColorValue::code)) {
+        _ if s.fg.is_none() && s.bg.is_none() => {}
+        (Some(fg), None) if s.bg.is_none() => write!(out, "{CTRL_COLOR}{fg:02}")?,
+        (None, Some(bg)) if s.fg.is_none() => write!(out, "{CTRL_COLOR}99,{bg:02}")?,
+        (Some(fg), Some(bg)) => write!(out, "{CTRL_COLOR}{fg:02},{bg:02}")?,
+        _ => {
             out.write_char(CTRL_HEX_COLOR)?;
-            if let Some(fg) = fg {
+            if let Some(fg) = s.fg {
                 let (r, g, b) = fg.to_rgb();
                 write!(out, "{r:02X}{g:02X}{b:02X}")?;
             }
-            if let Some(bg) = bg {
+            if let Some(bg) = s.bg {
                 let (r, g, b) = bg.to_rgb();
                 write!(out, ",{r:02X}{g:02X}{b:02X}")?;
             }
@@ -1196,7 +1307,7 @@ fn parse_irc(input: &str) -> Text {
         let n = s.bytes().take(2).take_while(u8::is_ascii_digit).count();
         let code = s[..n].parse::<u8>().ok()?;
         *s = &s[n..];
-        Some(Color::from_code(code).map(ColorValue::Palette))
+        Some(ColorValue::from_code(code))
     }
 
     // Reads exactly 6 hex digits from the start of `s`.

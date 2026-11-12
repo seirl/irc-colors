@@ -203,6 +203,7 @@ fn wrap_lines(arg: &str) -> Vec<Text> {
 fn format_color(c: ColorValue) -> String {
     match c {
         ColorValue::Palette(p) => format!("{p:?}({:02})", p.code()),
+        ColorValue::Extended(e) => format!("Extended({:02})", e.code()),
         ColorValue::Rgb(r, g, b) => format!("#{r:02X}{g:02X}{b:02X}"),
     }
 }
@@ -383,6 +384,7 @@ mod tests {
             "!theme \x0312CUSTOM",
             "!wrap 55 \x02bold and \x0304red text that wraps cleanly",
             "!inspect \x02\x0304,01styled\x0f plain",
+            "!inspect \x0316,88extended\x0f",
             "!strip \x02\x0304spoofed",
         ] {
             let lines = handle_command(cmd).expect(cmd);

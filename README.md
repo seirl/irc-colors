@@ -28,7 +28,7 @@ for chunk in line.wrap(400) {
 
 ## Features
 
-- **Chainable `Colorize` builder** on `&str`, `String`, `&String`, `Span`, `&Span`, `Text`, and `&Text` (16 standard IRC palette colors, 24-bit `\x04` RGB colors, bold, italic, underline, strikethrough, monospace, reverse, and fallback themes).
+- **Chainable `Colorize` builder** on `&str`, `String`, `&String`, `Span`, `&Span`, `Text`, and `&Text` (16 standard IRC palette colors, extended palette codes `16..=98`, 24-bit `\x04` RGB colors, bold, italic, underline, strikethrough, monospace, reverse, and fallback themes).
 - **Stateless `Span` model**: every span carries its complete resolved `Style`, so concatenating, slicing, or wrapping never loses formatting state across message boundaries.
 - **Byte-accurate `Text::wrap(max_bytes)`**: accounts for control/reset code overhead on the wire, breaks cleanly on spaces and `\r\n`/`\n`/`\r`, omits empty chunks, and falls back to Unicode grapheme-cluster splits for overlong words without tearing multi-codepoint emoji or accents.
 - **Round-trip `Text::parse`**: parses incoming IRC-formatted strings back into canonical `Text` for relaying, inspecting, or re-wrapping.

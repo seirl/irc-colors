@@ -1,4 +1,4 @@
-use irc_colors::{Color, ColorValue, Colorize, Text};
+use irc_colors::{Color, ColorValue, Colorize, ExtendedColor, Text};
 
 #[test]
 fn chain_and_concat() {
@@ -765,18 +765,21 @@ fn randomized_round_trip_and_wrap_invariants() {
 
         for _ in 0..span_count {
             let frag = sample_fragments[(next_u32() as usize) % sample_fragments.len()];
-            let fg = match next_u32() % 4 {
+            let fg = match next_u32() % 5 {
                 0 => None,
-                1 | 2 => Color::from_code((next_u32() % 16) as u8).map(ColorValue::Palette),
+                1 => Color::from_code((next_u32() % 16) as u8).map(ColorValue::Palette),
+                2 => ExtendedColor::new(16 + (next_u32() % 83) as u8).map(ColorValue::Extended),
+                3 => ColorValue::from_code((next_u32() % 100) as u8),
                 _ => Some(ColorValue::Rgb(
                     next_u32() as u8,
                     (next_u32() >> 8) as u8,
                     (next_u32() >> 16) as u8,
                 )),
             };
-            let bg = match next_u32() % 4 {
+            let bg = match next_u32() % 5 {
                 0 | 1 => None,
                 2 => Color::from_code((next_u32() % 16) as u8).map(ColorValue::Palette),
+                3 => ExtendedColor::new(16 + (next_u32() % 83) as u8).map(ColorValue::Extended),
                 _ => Some(ColorValue::Rgb(
                     next_u32() as u8,
                     (next_u32() >> 8) as u8,
@@ -937,6 +940,12 @@ fn const_style_builders() {
     const INHERITED_BG: Style = Style::new().rgb(10, 20, 30).with_fallback(BASE);
     assert_eq!(INHERITED_BG.fg, Some(ColorValue::Rgb(10, 20, 30)));
     assert_eq!(INHERITED_BG.bg, Some(ColorValue::Rgb(1, 2, 3)));
+
+    const EXT: Style = Style::new()
+        .extended(ExtendedColor::ALL[0])
+        .on_extended(ExtendedColor::ALL[82]);
+    assert_eq!(EXT.fg, ColorValue::from_code(16));
+    assert_eq!(EXT.bg, ColorValue::from_code(98));
 }
 
 #[test]
@@ -1069,4 +1078,109 @@ fn text_join_separates_items_and_coalesces_styles() {
     // Works with borrowed `&Text` slices and empty middle items too.
     let items = [Text::raw("x"), Text::new(), Text::raw("z")];
     assert_eq!(Text::join(&items, "|"), Text::raw("x||z"));
+}
+
+#[test]
+fn extended_colors_round_trip_and_mix_cleanly() {
+    // Boundary checks on `ExtendedColor::new`, `ExtendedColor::ALL`, and `ColorValue::from_code`.
+    for code in 0..=u8::MAX {
+        match code {
+            0..=15 => {
+                assert_eq!(ExtendedColor::new(code), None);
+                let cv = ColorValue::from_code(code).unwrap();
+                assert_eq!(cv, ColorValue::Palette(Color::from_code(code).unwrap()));
+                assert_eq!(cv.code(), Some(code));
+            }
+            16..=98 => {
+                let ext = ExtendedColor::new(code).unwrap();
+                assert_eq!(ext.code(), code);
+                assert_eq!(ExtendedColor::ALL[(code - 16) as usize], ext);
+                let cv = ColorValue::from_code(code).unwrap();
+                assert_eq!(cv, ColorValue::Extended(ext));
+                assert_eq!(cv.code(), Some(code));
+            }
+            99..=u8::MAX => {
+                assert_eq!(ExtendedColor::new(code), None);
+                assert_eq!(ColorValue::from_code(code), None);
+            }
+        }
+    }
+    assert_eq!(ColorValue::Rgb(1, 2, 3).code(), None);
+
+    // Spot-check canonical RGB entries from `modern.ircdocs.horse/formatting#colors-16-98`.
+    for (code, rgb) in [
+        (16, (0x47, 0x00, 0x00)),
+        (21, (0x00, 0x47, 0x2c)),
+        (51, (0xb5, 0x00, 0x6b)),
+        (52, (0xff, 0x00, 0x00)),
+        (58, (0x00, 0xff, 0xff)),
+        (87, (0xff, 0x94, 0xd3)),
+        (88, (0x00, 0x00, 0x00)),
+        (98, (0xff, 0xff, 0xff)),
+    ] {
+        let ext = ExtendedColor::new(code).unwrap();
+        assert_eq!(ext.to_rgb(), rgb);
+        assert_eq!(ColorValue::from(ext).to_rgb(), rgb);
+    }
+
+    // Every extended color `16..=98` round-trips as fg, bg-only (`\x0399,<code>`), and fg+bg,
+    // including before leading digits and `,digits`.
+    for ext in ExtendedColor::ALL {
+        let fg_only = "5,13".fg(ext);
+        assert_eq!(
+            fg_only.to_irc_string(),
+            format!("\u{03}{:02}5,13\u{0f}", ext.code())
+        );
+        assert_eq!(Text::parse(&fg_only.to_irc_string()), fg_only);
+
+        let comma_text = ",13".fg(ext);
+        assert_eq!(Text::parse(&comma_text.to_irc_string()), comma_text);
+
+        let bg_only = "5".bg(ext);
+        assert_eq!(
+            bg_only.to_irc_string(),
+            format!("\u{03}99,{:02}5\u{0f}", ext.code())
+        );
+        assert_eq!(Text::parse(&bg_only.to_irc_string()), bg_only);
+    }
+
+    // Mixing `Palette` and `Extended` stays in native `\x03` form without promoting to `\x04`.
+    let c20 = ExtendedColor::new(20).unwrap();
+    let pal_ext = "hi".red().bg(c20);
+    assert_eq!(pal_ext.to_irc_string(), "\u{03}04,20hi\u{0f}");
+    assert_eq!(Text::parse(&pal_ext.to_irc_string()), pal_ext);
+
+    let ext_pal = "hi".fg(c20).on_white();
+    assert_eq!(ext_pal.to_irc_string(), "\u{03}20,00hi\u{0f}");
+    assert_eq!(Text::parse(&ext_pal.to_irc_string()), ext_pal);
+
+    // Mixing `Extended` with `Rgb` promotes the extended side via `to_rgb()` to `\x04` hex.
+    let c16 = ExtendedColor::new(16).unwrap();
+    let ext_rgb = "x".fg(c16).on_rgb(1, 2, 3);
+    assert_eq!(ext_rgb.to_irc_string(), "\u{04}470000,010203x\u{0f}");
+    assert_eq!(
+        Text::parse(&ext_rgb.to_irc_string()),
+        "x".rgb(0x47, 0x00, 0x00).on_rgb(1, 2, 3)
+    );
+
+    // Relaying `\x0316`..`\x0398` preserves extended colors while `\x0399` resets the channel.
+    let relayed = Text::parse("\u{03}16,88dark\u{03}98light\u{03}99,99plain");
+    assert_eq!(
+        relayed.spans()[0].style.fg,
+        Some(ColorValue::Extended(ExtendedColor::new(16).unwrap()))
+    );
+    assert_eq!(
+        relayed.spans()[0].style.bg,
+        Some(ColorValue::Extended(ExtendedColor::new(88).unwrap()))
+    );
+    assert_eq!(
+        relayed.spans()[1].style.fg,
+        Some(ColorValue::Extended(ExtendedColor::new(98).unwrap()))
+    );
+    assert_eq!(
+        relayed.spans()[1].style.bg,
+        Some(ColorValue::Extended(ExtendedColor::new(88).unwrap()))
+    );
+    assert_eq!(relayed.spans()[2].style.fg, None);
+    assert_eq!(relayed.spans()[2].style.bg, None);
 }
