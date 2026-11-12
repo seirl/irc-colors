@@ -73,7 +73,8 @@ pub enum Color {
 }
 
 impl Color {
-    const ALL: [Color; 16] = [
+    /// All 16 palette colors in code order (`0..=15`).
+    pub const ALL: [Color; 16] = [
         Color::White,
         Color::Black,
         Color::Blue,
@@ -359,10 +360,17 @@ impl Text {
 
     /// Plain, unformatted text. Any raw IRC formatting control bytes (or NUL
     /// bytes) embedded in `s` are stripped so they cannot spoof styles, break
-    /// out of surrounding spans, or corrupt IRC frames on the wire; use
-    /// [`Text::parse`] to interpret wire-formatted IRC strings.
-    pub fn raw(s: impl Into<String>) -> Self {
-        Text::from(s.into())
+    /// out of surrounding spans, or inject NULs; use [`Text::parse`] to
+    /// interpret wire-formatted IRC strings.
+    ///
+    /// Line breaks (`\r`, `\n`) and CTCP delimiters (`\x01`) are preserved;
+    /// pass untrusted input through [`Text::wrap`] or [`Text::split_lines`]
+    /// before sending on the wire so embedded `\r`/`\n` cannot inject IRC
+    /// frames.
+    pub fn raw<'a>(s: impl Into<Cow<'a, str>>) -> Self {
+        let mut out = Text::new();
+        out.push(s, Style::default());
+        out
     }
 
     /// The canonical sequence of non-empty, style-coalesced [`Span`]s.
@@ -437,9 +445,12 @@ impl Text {
         w.0
     }
 
-    /// Serialize to raw IRC-formatted bytes (as a `String`), resetting with
-    /// `\x0f` and emitting the new span's codes whenever the style changes.
-    /// This is what you send over the wire.
+    /// Serialize to raw IRC-formatted bytes (as a `String`), toggling
+    /// formatting flags in place when colors match or resetting with `\x0f`
+    /// and emitting the new span's codes when colors change. This is what you
+    /// send over the wire (note that any `\r` or `\n` inside spans is emitted
+    /// verbatim; use [`Text::wrap`] or [`Text::split_lines`] to split
+    /// multi-line text into frame-safe IRC messages).
     ///
     /// If a span's `fg`/`bg` mix a palette [`Color`] with an RGB value (only
     /// possible via [`Colorize::with_fallback_style`] composition, not the ordinary
@@ -464,11 +475,14 @@ impl Text {
     }
 
     /// Split into a list of non-empty `Text`s, each of which will render to at
-    /// most `max_bytes` bytes on the wire, breaking on spaces (`' '`, consuming
-    /// the break-point spaces) and never splitting a word in half (unless a
-    /// single word alone exceeds `max_bytes`, in which case it's hard-split at
-    /// a grapheme-cluster boundary — so a multi-codepoint character like an
-    /// emoji or an accented letter is never torn apart). Explicit `\n`s,
+    /// most `max_bytes` bytes on the wire (unless a single grapheme cluster
+    /// plus its own setup/reset codes exceeds `max_bytes`, in which case that
+    /// 1-grapheme chunk is emitted intact rather than tearing UTF-8/grapheme
+    /// sequences or dropping text). Breaks on spaces (`' '`, consuming the
+    /// break-point spaces) and never splits a word in half unless a single
+    /// word alone exceeds `max_bytes`, in which case it's hard-split at a
+    /// grapheme-cluster boundary — so a multi-codepoint character like an
+    /// emoji or an accented letter is never torn apart. Explicit `\n`s,
     /// `\r\n`s, and `\r`s always force a break, and empty lines or chunks are
     /// omitted so every returned `Text` is safe to send directly as an IRC
     /// `PRIVMSG`.
@@ -479,8 +493,8 @@ impl Text {
     /// boundaries with no extra bookkeeping needed on your end.
     pub fn wrap(&self, max_bytes: usize) -> Vec<Text> {
         let mut lines = Vec::new();
-        if self.spans.iter().any(|s| s.text.contains(['\r', '\n'])) {
-            for line in self.split_lines() {
+        if self.has_line_break() {
+            for line in self.split_lines_inner() {
                 Self::wrap_line(Cow::Owned(line), max_bytes, &mut lines);
             }
         } else {
@@ -557,10 +571,17 @@ impl Text {
     /// Unlike [`Text::wrap`], empty lines (including after a trailing newline
     /// or on an empty `Text`) are preserved as empty `Text` entries.
     pub fn split_lines(&self) -> Vec<Text> {
-        if !self.spans.iter().any(|s| s.text.contains(['\r', '\n'])) {
+        if !self.has_line_break() {
             return vec![self.clone()];
         }
+        self.split_lines_inner()
+    }
 
+    fn has_line_break(&self) -> bool {
+        self.spans.iter().any(|s| s.text.contains(['\r', '\n']))
+    }
+
+    fn split_lines_inner(&self) -> Vec<Text> {
         let mut lines = Vec::new();
         let mut cur = Text::new();
         let mut skip_lf = false;
@@ -587,6 +608,41 @@ impl Text {
         lines.push(cur);
 
         lines
+    }
+
+    /// Concatenate the items of `iter` into a single [`Text`], inserting `sep`
+    /// between adjacent items.
+    ///
+    /// ```
+    /// use irc_colors::{Colorize, Text};
+    ///
+    /// let users = ["alice", "bob", "carol"];
+    /// let list = Text::join(users.iter().map(|u| u.bold()), ", ".grey());
+    /// assert_eq!(list.plain(), "alice, bob, carol");
+    /// ```
+    pub fn join<I, S>(iter: I, sep: S) -> Text
+    where
+        I: IntoIterator,
+        Text: AddAssign<I::Item>,
+        S: Into<Text>,
+    {
+        let mut iter = iter.into_iter();
+        let Some(first) = iter.next() else {
+            return Text::new();
+        };
+        let mut out = Text::new();
+        out += first;
+        let Some(second) = iter.next() else {
+            return out;
+        };
+        let sep = sep.into();
+        AddAssign::<&Text>::add_assign(&mut out, &sep);
+        out += second;
+        for item in iter {
+            AddAssign::<&Text>::add_assign(&mut out, &sep);
+            out += item;
+        }
+        out
     }
 
     /// Re-parse raw IRC-formatted text (as received from IRC) back into a
@@ -961,21 +1017,26 @@ const fn is_control_char(c: char) -> bool {
     )
 }
 
-/// Emit the formatting and color codes that establish `s` starting from
-/// [`Style::default()`], right before `first_char`.
-fn emit_style(out: &mut impl fmt::Write, s: Style, first_char: char) -> fmt::Result {
-    for (enabled, code) in [
-        (s.bold, CTRL_BOLD),
-        (s.italic, CTRL_ITALIC),
-        (s.underline, CTRL_UNDERLINE),
-        (s.strikethrough, CTRL_STRIKETHROUGH),
-        (s.monospace, CTRL_MONOSPACE),
-        (s.reverse, CTRL_REVERSE),
+fn emit_toggles(out: &mut impl fmt::Write, from: Style, to: Style) -> fmt::Result {
+    for (changed, code) in [
+        (from.bold != to.bold, CTRL_BOLD),
+        (from.italic != to.italic, CTRL_ITALIC),
+        (from.underline != to.underline, CTRL_UNDERLINE),
+        (from.strikethrough != to.strikethrough, CTRL_STRIKETHROUGH),
+        (from.monospace != to.monospace, CTRL_MONOSPACE),
+        (from.reverse != to.reverse, CTRL_REVERSE),
     ] {
-        if enabled {
+        if changed {
             out.write_char(code)?;
         }
     }
+    Ok(())
+}
+
+/// Emit the formatting and color codes that establish `s` starting from
+/// [`Style::default()`].
+fn emit_style(out: &mut impl fmt::Write, s: Style, starts_with_comma: bool) -> fmt::Result {
+    emit_toggles(out, Style::default(), s)?;
 
     // `99` is the codified IRC default/transparent color code, used so `<FG>`
     // is never omitted before `,<BG>` on the wire for palette colors.
@@ -1001,7 +1062,7 @@ fn emit_style(out: &mut impl fmt::Write, s: Style, first_char: char) -> fmt::Res
 
     // A foreground-only color followed by `,` could have `,` + digits
     // eaten as a background color; nudge apart with an empty bold pair.
-    if s.fg.is_some() && s.bg.is_none() && first_char == ',' {
+    if s.fg.is_some() && s.bg.is_none() && starts_with_comma {
         out.write_char(CTRL_BOLD)?;
         out.write_char(CTRL_BOLD)?;
     }
@@ -1015,14 +1076,23 @@ fn push_styled(
     text: &str,
     style: Style,
 ) -> fmt::Result {
-    let Some(first) = text.chars().next() else {
+    if text.is_empty() {
         return Ok(());
-    };
+    }
     if style != *cur {
-        if *cur != Style::default() {
-            out.write_char(CTRL_RESET)?;
+        if style != Style::default()
+            && *cur != Style::default()
+            && (cur.fg, cur.bg) == (style.fg, style.bg)
+        {
+            emit_toggles(out, *cur, style)?;
+        } else {
+            if *cur != Style::default() {
+                out.write_char(CTRL_RESET)?;
+            }
+            if style != Style::default() {
+                emit_style(out, style, text.starts_with(','))?;
+            }
         }
-        emit_style(out, style, first)?;
         *cur = style;
     }
     out.write_str(text)
@@ -1078,14 +1148,12 @@ impl LineBuf {
     }
 
     fn take_line(&mut self) -> Text {
-        let text = core::mem::take(&mut self.text);
+        let line = core::mem::take(self);
         debug_assert_eq!(
-            self.wire.0 + usize::from(self.style != Style::default()),
-            text.to_irc_string().len()
+            line.wire.0 + usize::from(line.style != Style::default()),
+            line.text.wire_len()
         );
-        self.wire = WireLen(0);
-        self.style = Style::default();
-        text
+        line.text
     }
 }
 

@@ -941,3 +941,77 @@ fn nul_bytes_are_stripped() {
     assert_eq!(("hel\0lo".red()).to_irc_string(), "\u{03}04hello\u{0f}");
     assert_eq!(Text::parse("\u{02}hel\0lo\u{0f}"), "hello".bold());
 }
+
+#[test]
+fn color_all_matches_codes() {
+    assert_eq!(Color::ALL.len(), 16);
+    for (idx, color) in Color::ALL.into_iter().enumerate() {
+        assert_eq!(color.code() as usize, idx);
+        assert_eq!(Color::from_code(idx as u8), Some(color));
+    }
+}
+
+#[test]
+fn cow_works_with_raw_and_deref_colorize() {
+    use std::borrow::Cow;
+
+    let borrowed: Cow<'_, str> = Cow::Borrowed("hello");
+    let owned: Cow<'_, str> = Cow::Owned(String::from(" world"));
+
+    assert_eq!(Text::raw(Cow::Borrowed("\u{02}\u{0f}")), Text::new());
+    assert_eq!(Text::raw(owned.clone()).plain(), " world");
+    // Without `From<Cow<str>>`, both `cow.red()` and `(&cow).red()` work via deref to `&str`
+    // without moving `cow`.
+    assert_eq!(borrowed.red(), (&borrowed).red());
+    assert_eq!((owned.bold() + &*borrowed).plain(), " worldhello");
+}
+
+#[test]
+fn same_color_transitions_toggle_in_place() {
+    let nested_color = ("a " + "b".bold() + " c").red();
+    assert_eq!(
+        nested_color.to_irc_string(),
+        "\u{03}04a \u{02}b\u{02} c\u{0f}"
+    );
+    assert_eq!(Text::parse(&nested_color.to_irc_string()), nested_color);
+
+    let nested_plain = ("a " + "b".italic() + " c").bold();
+    assert_eq!(nested_plain.to_irc_string(), "\u{02}a \u{1d}b\u{1d} c\u{0f}");
+    assert_eq!(Text::parse(&nested_plain.to_irc_string()), nested_plain);
+
+    // Comma+digit on a toggled span stays safe both inline and across a wrap break.
+    let comma_toggle = ("hello " + ",5".bold()).red();
+    assert_eq!(comma_toggle.to_irc_string(), "\u{03}04hello \u{02},5\u{0f}");
+    assert_eq!(Text::parse(&comma_toggle.to_irc_string()), comma_toggle);
+
+    let wrapped = comma_toggle.wrap(10);
+    assert_eq!(wrapped.len(), 2);
+    assert_eq!(wrapped[0].to_irc_string(), "\u{03}04hello\u{0f}");
+    assert_eq!(
+        wrapped[1].to_irc_string(),
+        "\u{02}\u{03}04\u{02}\u{02},5\u{0f}"
+    );
+    assert_eq!(Text::parse(&wrapped[1].to_irc_string()), ",5".bold().red());
+}
+
+#[test]
+fn text_join_separates_items_and_coalesces_styles() {
+    assert_eq!(Text::join(std::iter::empty::<Text>(), ", "), Text::new());
+    assert_eq!(Text::join(["only".red()], ", "), "only".red());
+
+    let nicks = ["alice", "bob", "carol"];
+    let joined = Text::join(nicks.iter().map(|n| n.bold()), ", ".grey());
+    assert_eq!(
+        joined,
+        "alice".bold() + ", ".grey() + "bob".bold() + ", ".grey() + "carol".bold()
+    );
+
+    // Adjacent matching styles across items and separators still coalesce into one span.
+    let same_style = Text::join(["a".red(), "b".red(), "c".red()], "-".red());
+    assert_eq!(same_style, "a-b-c".red());
+    assert_eq!(same_style.spans().len(), 1);
+
+    // Works with borrowed `&Text` slices and empty middle items too.
+    let items = [Text::raw("x"), Text::new(), Text::raw("z")];
+    assert_eq!(Text::join(&items, "|"), Text::raw("x||z"));
+}
