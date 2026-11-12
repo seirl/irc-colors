@@ -93,12 +93,10 @@ impl Color {
         Color::LightGrey,
     ];
 
-    #[must_use]
     pub const fn code(self) -> u8 {
         self as u8
     }
 
-    #[must_use]
     pub const fn from_code(code: u8) -> Option<Color> {
         if (code as usize) < Self::ALL.len() {
             Some(Self::ALL[code as usize])
@@ -112,7 +110,6 @@ impl Color {
     /// indices as). Used internally so a palette color never has to be
     /// silently dropped when it ends up sharing a span with an RGB color —
     /// see [`ColorValue`].
-    #[must_use]
     pub const fn to_rgb(self) -> (u8, u8, u8) {
         use Color::*;
         match self {
@@ -169,7 +166,6 @@ impl From<(u8, u8, u8)> for ColorValue {
 impl ColorValue {
     /// This color's RGB `(r, g, b)` value, converting a palette [`Color`] via
     /// its canonical [`Color::to_rgb`] mapping if needed.
-    #[must_use]
     pub const fn to_rgb(self) -> (u8, u8, u8) {
         match self {
             ColorValue::Rgb(r, g, b) => (r, g, b),
@@ -379,19 +375,16 @@ impl Text {
     }
 
     /// The canonical sequence of non-empty, style-coalesced [`Span`]s.
-    #[must_use]
     pub fn spans(&self) -> &[Span] {
         &self.spans
     }
 
     /// Consume this text and return its canonical sequence of [`Span`]s.
-    #[must_use]
     pub fn into_spans(self) -> Vec<Span> {
         self.spans
     }
 
     /// Whether this text contains no characters (all spans are empty).
-    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.spans.is_empty()
     }
@@ -430,7 +423,6 @@ impl Text {
     }
 
     /// The text content with all formatting stripped.
-    #[must_use]
     pub fn plain(&self) -> String {
         let len = self.spans.iter().map(|s| s.text.len()).sum();
         let mut out = String::with_capacity(len);
@@ -448,7 +440,6 @@ impl Text {
     /// Note that this measures neither terminal display width (e.g. double-width
     /// CJK characters) nor IRC protocol length limits, which are counted in
     /// wire bytes — use [`Text::wire_len`] or [`Text::wrap`] for wire budgets.
-    #[must_use]
     pub fn visible_len(&self) -> usize {
         self.spans
             .iter()
@@ -458,7 +449,6 @@ impl Text {
 
     /// Exact byte length this text will occupy on the wire when serialized
     /// with [`Text::to_irc_string`], computed without allocating.
-    #[must_use]
     pub fn wire_len(&self) -> usize {
         let mut w = WireLen(0);
         let _ = self.write_irc(&mut w);
@@ -477,7 +467,6 @@ impl Text {
     /// correctly: the whole pair is sent in `\x04` hex form, with the palette
     /// side converted via its canonical RGB value ([`Color::to_rgb`]) rather
     /// than dropped.
-    #[must_use]
     pub fn to_irc_string(&self) -> String {
         let mut out = String::with_capacity(self.wire_len());
         let _ = self.write_irc(&mut out);
@@ -520,7 +509,6 @@ impl Text {
     /// each returned chunk re-serializes its own leading codes from
     /// scratch — so styling is preserved correctly across message
     /// boundaries with no extra bookkeeping needed on your end.
-    #[must_use]
     pub fn wrap(&self, max_bytes: usize) -> Vec<Text> {
         let mut lines = Vec::new();
         // Pre-split on line breaks so cross-span `\r\n` logic stays in one place
@@ -603,7 +591,6 @@ impl Text {
     ///
     /// Unlike [`Text::wrap`], empty lines (including after a trailing newline
     /// or on an empty `Text`) are preserved as empty `Text` entries.
-    #[must_use]
     pub fn split_lines(&self) -> Vec<Text> {
         if !self.has_line_break() {
             return vec![self.clone()];
