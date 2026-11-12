@@ -953,11 +953,25 @@ fn borrowed_text_and_span_ops() {
 }
 
 #[test]
-fn nul_bytes_are_stripped() {
+fn nul_and_ctcp_bytes_are_stripped() {
     assert!(Text::raw("\0").is_empty());
     assert_eq!(Text::raw("hel\0lo").plain(), "hello");
     assert_eq!(("hel\0lo".red()).to_irc_string(), "\u{03}04hello\u{0f}");
     assert_eq!(Text::parse("\u{02}hel\0lo\u{0f}"), "hello".bold());
+
+    assert!(Text::raw("\u{01}").is_empty());
+    assert_eq!(
+        Text::raw("\u{01}ACTION slaps everyone\u{01}").plain(),
+        "ACTION slaps everyone"
+    );
+    assert_eq!(
+        String::from("\u{01}VERSION\u{01}").bold().to_irc_string(),
+        "\u{02}VERSION\u{0f}"
+    );
+    assert_eq!(
+        Text::parse("\u{01}ACTION \u{02}waves\u{0f}\u{01}"),
+        "ACTION " + "waves".bold()
+    );
 }
 
 #[test]

@@ -363,15 +363,15 @@ impl Text {
         Text { spans: Vec::new() }
     }
 
-    /// Plain, unformatted text. Any raw IRC formatting control bytes (or NUL
-    /// bytes) embedded in `s` are stripped so they cannot spoof styles, break
-    /// out of surrounding spans, or inject NULs; use [`Text::parse`] to
-    /// interpret wire-formatted IRC strings.
+    /// Plain, unformatted text. Any raw IRC formatting control bytes, CTCP
+    /// delimiters (`\x01`), or NUL bytes embedded in `s` are stripped so they
+    /// cannot spoof styles, break out of surrounding spans, inject CTCP
+    /// commands, or inject NULs; use [`Text::parse`] to interpret
+    /// wire-formatted IRC strings.
     ///
-    /// Line breaks (`\r`, `\n`) and CTCP delimiters (`\x01`) are preserved;
-    /// pass untrusted input through [`Text::wrap`] or [`Text::split_lines`]
-    /// before sending on the wire so embedded `\r`/`\n` cannot inject IRC
-    /// frames.
+    /// Line breaks (`\r`, `\n`) are preserved; pass untrusted input through
+    /// [`Text::wrap`] or [`Text::split_lines`] before sending on the wire so
+    /// embedded `\r`/`\n` cannot inject IRC frames.
     pub fn raw<'a>(s: impl Into<Cow<'a, str>>) -> Self {
         let mut out = Text::new();
         out.push(s, Style::default());
@@ -1028,6 +1028,7 @@ impl<T: Into<Text>> Colorize for T {}
 // ---------------------------------------------------------------------------
 
 const CTRL_NUL: char = '\x00';
+const CTRL_CTCP: char = '\x01';
 const CTRL_BOLD: char = '\x02';
 const CTRL_COLOR: char = '\x03';
 const CTRL_HEX_COLOR: char = '\x04';
@@ -1042,6 +1043,7 @@ const fn is_control_char(c: char) -> bool {
     matches!(
         c,
         CTRL_NUL
+            | CTRL_CTCP
             | CTRL_BOLD
             | CTRL_COLOR
             | CTRL_HEX_COLOR
@@ -1252,7 +1254,7 @@ fn parse_irc(input: &str) -> Text {
         let c = s.as_bytes()[pos] as char;
         s = &s[pos + 1..];
         match c {
-            CTRL_NUL => {}
+            CTRL_NUL | CTRL_CTCP => {}
             CTRL_BOLD => style.bold = !style.bold,
             CTRL_ITALIC => style.italic = !style.italic,
             CTRL_UNDERLINE => style.underline = !style.underline,
