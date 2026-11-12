@@ -730,6 +730,7 @@ fn randomized_round_trip_and_wrap_invariants() {
         "first\r",
         "\nsecond",
         "\u{02}raw\u{03}04",
+        "nul\0byte",
         "superlongfragwithoutspaces",
     ];
 
@@ -805,7 +806,7 @@ fn randomized_round_trip_and_wrap_invariants() {
                 assert!(!chunk.is_empty());
                 let cw = chunk.to_irc_string();
                 assert_eq!(chunk.wire_len(), cw.len());
-                assert!(!cw.contains('\r') && !cw.contains('\n'));
+                assert!(!cw.contains('\0') && !cw.contains('\r') && !cw.contains('\n'));
                 // Only when a single grapheme + its own required setup/reset
                 // codes exceeds `max_bytes` is a 1-grapheme chunk allowed to
                 // exceed `max_bytes` (rather than tearing UTF-8 / ZWJ sequences).
@@ -872,8 +873,8 @@ fn wrap_omits_empty_chunks() {
 }
 
 #[test]
-fn const_styles_borrowed_text_ops_tuple_rgb_and_iterators() {
-    use irc_colors::{Span, Style};
+fn const_style_builders() {
+    use irc_colors::Style;
 
     const BASE: Style = Style::new().italic().on_rgb(1, 2, 3);
     const WARN: Style = Style::new()
@@ -895,12 +896,18 @@ fn const_styles_borrowed_text_ops_tuple_rgb_and_iterators() {
     const INHERITED_BG: Style = Style::new().rgb(10, 20, 30).with_fallback(BASE);
     assert_eq!(INHERITED_BG.fg, Some(ColorValue::Rgb(10, 20, 30)));
     assert_eq!(INHERITED_BG.bg, Some(ColorValue::Rgb(1, 2, 3)));
+}
 
-    // Tuple `(u8, u8, u8)` converts into `ColorValue::Rgb` for `.fg()` / `.bg()`.
+#[test]
+fn tuple_rgb_conversion() {
     let tuple_colored = "rgb".fg((255, 105, 180)).bg((0, 0, 0));
     assert_eq!(tuple_colored, "rgb".rgb(255, 105, 180).on_rgb(0, 0, 0));
+}
 
-    // Borrowed `&Text` supports `Colorize`, `+`, `+=`, and `&IntoIterator` without `.clone()`.
+#[test]
+fn borrowed_text_and_span_ops() {
+    use irc_colors::{Span, Style};
+
     let a = "Hello".red();
     let b = " world".blue();
     let mut combined = &a + &b;
@@ -909,10 +916,28 @@ fn const_styles_borrowed_text_ops_tuple_rgb_and_iterators() {
     assert_eq!(full.plain(), ">> Hello world! end");
     assert_eq!((&a).bold(), "Hello".red().bold());
 
-    let borrowed_texts: Vec<&Span> = (&full).into_iter().collect();
-    assert_eq!(borrowed_texts, full.spans().iter().collect::<Vec<_>>());
+    let borrowed_spans: Vec<&Span> = (&full).into_iter().collect();
+    assert_eq!(borrowed_spans, full.spans().iter().collect::<Vec<_>>());
+
+    // `&Span` round-trips through `FromIterator`, `Extend`, `+=`, `+`, and `Colorize`.
+    let recloned: Text = (&full).into_iter().collect();
+    assert_eq!(recloned, full);
+    let mut extended = Text::new();
+    extended.extend(&b);
+    let bang = Span::new("!", Style::new().bold());
+    extended += &bang;
+    assert_eq!(extended, &b + &bang);
+    assert_eq!((&a.spans()[0]).bold(), "Hello".red().bold());
 
     let owned_spans = full.clone().into_spans();
     let iter_spans: Vec<Span> = full.into_iter().collect();
     assert_eq!(owned_spans, iter_spans);
+}
+
+#[test]
+fn nul_bytes_are_stripped() {
+    assert!(Text::raw("\0").is_empty());
+    assert_eq!(Text::raw("hel\0lo").plain(), "hello");
+    assert_eq!(("hel\0lo".red()).to_irc_string(), "\u{03}04hello\u{0f}");
+    assert_eq!(Text::parse("\u{02}hel\0lo\u{0f}"), "hello".bold());
 }

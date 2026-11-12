@@ -357,10 +357,10 @@ impl Text {
         Text { spans: Vec::new() }
     }
 
-    /// Plain, unformatted text. Any raw IRC formatting control bytes embedded
-    /// in `s` are stripped so they cannot spoof styles or break out of
-    /// surrounding spans on the wire; use [`Text::parse`] to interpret
-    /// wire-formatted IRC strings.
+    /// Plain, unformatted text. Any raw IRC formatting control bytes (or NUL
+    /// bytes) embedded in `s` are stripped so they cannot spoof styles, break
+    /// out of surrounding spans, or corrupt IRC frames on the wire; use
+    /// [`Text::parse`] to interpret wire-formatted IRC strings.
     pub fn raw(s: impl Into<String>) -> Self {
         Text::from(s.into())
     }
@@ -383,12 +383,12 @@ impl Text {
     fn push<'a>(&mut self, text: impl Into<Cow<'a, str>>, style: Style) {
         match text.into() {
             Cow::Borrowed(s) => {
-                for part in s.split(is_format_char) {
+                for part in s.split(is_control_char) {
                     self.push_clean(part, style);
                 }
             }
             Cow::Owned(mut s) => {
-                s.retain(|c| !is_format_char(c));
+                s.retain(|c| !is_control_char(c));
                 self.push_clean(s, style);
             }
         }
@@ -410,7 +410,12 @@ impl Text {
 
     /// The text content with all formatting stripped.
     pub fn plain(&self) -> String {
-        self.spans.iter().map(|s| s.text.as_str()).collect()
+        let len = self.spans.iter().map(|s| s.text.len()).sum();
+        let mut out = String::with_capacity(len);
+        for s in &self.spans {
+            out.push_str(&s.text);
+        }
+        out
     }
 
     /// Length in grapheme clusters, ignoring control codes — the count a
@@ -618,6 +623,12 @@ impl From<Span> for Text {
     }
 }
 
+impl From<&Span> for Text {
+    fn from(span: &Span) -> Self {
+        Text::new() + span
+    }
+}
+
 impl From<&Text> for Text {
     fn from(t: &Text) -> Self {
         t.clone()
@@ -642,15 +653,21 @@ impl<'a> IntoIterator for &'a Text {
     }
 }
 
-impl<T: Into<Text>> Extend<T> for Text {
+impl<T> Extend<T> for Text
+where
+    Text: AddAssign<T>,
+{
     fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
         for item in iter {
-            *self += item.into();
+            *self += item;
         }
     }
 }
 
-impl<T: Into<Text>> FromIterator<T> for Text {
+impl<T> FromIterator<T> for Text
+where
+    Text: AddAssign<T>,
+{
     fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
         let mut out = Text::new();
         out.extend(iter);
@@ -733,6 +750,11 @@ impl Add<&Text> for String {
 
 impl AddAssign<Text> for Text {
     fn add_assign(&mut self, rhs: Text) {
+        if self.is_empty() {
+            *self = rhs;
+            return;
+        }
+        self.spans.reserve(rhs.spans.len());
         for span in rhs.spans {
             self.push_clean(span.text, span.style);
         }
@@ -741,6 +763,7 @@ impl AddAssign<Text> for Text {
 
 impl AddAssign<&Text> for Text {
     fn add_assign(&mut self, rhs: &Text) {
+        self.spans.reserve(rhs.spans.len());
         for span in &rhs.spans {
             self.push_clean(&span.text, span.style);
         }
@@ -768,6 +791,12 @@ impl AddAssign<String> for Text {
 impl AddAssign<Span> for Text {
     fn add_assign(&mut self, rhs: Span) {
         self.push(rhs.text, rhs.style);
+    }
+}
+
+impl AddAssign<&Span> for Text {
+    fn add_assign(&mut self, rhs: &Span) {
+        self.push(&rhs.text, rhs.style);
     }
 }
 
@@ -905,6 +934,7 @@ impl<T: Into<Text>> Colorize for T {}
 // IRC formatting control codes & wire emission
 // ---------------------------------------------------------------------------
 
+const CTRL_NUL: char = '\x00';
 const CTRL_BOLD: char = '\x02';
 const CTRL_COLOR: char = '\x03';
 const CTRL_HEX_COLOR: char = '\x04';
@@ -915,10 +945,11 @@ const CTRL_ITALIC: char = '\x1d';
 const CTRL_STRIKETHROUGH: char = '\x1e';
 const CTRL_UNDERLINE: char = '\x1f';
 
-const fn is_format_char(c: char) -> bool {
+const fn is_control_char(c: char) -> bool {
     matches!(
         c,
-        CTRL_BOLD
+        CTRL_NUL
+            | CTRL_BOLD
             | CTRL_COLOR
             | CTRL_HEX_COLOR
             | CTRL_RESET
@@ -1107,11 +1138,12 @@ fn parse_irc(input: &str) -> Text {
         }
     }
 
-    while let Some(pos) = s.find(is_format_char) {
+    while let Some(pos) = s.find(is_control_char) {
         out.push_clean(&s[..pos], style);
         let c = s.as_bytes()[pos] as char;
         s = &s[pos + 1..];
         match c {
+            CTRL_NUL => {}
             CTRL_BOLD => style.bold = !style.bold,
             CTRL_ITALIC => style.italic = !style.italic,
             CTRL_UNDERLINE => style.underline = !style.underline,
