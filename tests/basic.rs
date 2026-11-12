@@ -194,7 +194,26 @@ fn parse_supports_background_only_color_spec() {
 #[test]
 fn hex_and_palette_mixed_in_one_span_keeps_both_colors() {
     use irc_colors::Style;
-    // Only reachable via fallback style composition, not the ordinary builder.
+
+    // Direct `Colorize` chain mixing palette fg with RGB bg (and vice versa).
+    let direct = "x".red().on_rgb(1, 2, 3);
+    assert_eq!(direct.spans()[0].style.fg, Some(ColorValue::Palette(Color::Red)));
+    assert_eq!(direct.spans()[0].style.bg, Some(ColorValue::Rgb(1, 2, 3)));
+    assert_eq!(direct.to_irc_string(), "\u{04}FF0000,010203x\u{0f}");
+    let direct_reparsed = Text::parse(&direct.to_irc_string());
+    assert_eq!(
+        direct_reparsed.spans()[0].style.fg,
+        Some(ColorValue::Rgb(255, 0, 0))
+    );
+    assert_eq!(
+        direct_reparsed.spans()[0].style.bg,
+        Some(ColorValue::Rgb(1, 2, 3))
+    );
+
+    let reverse_mix = "x".rgb(1, 2, 3).on_blue();
+    assert_eq!(reverse_mix.to_irc_string(), "\u{04}010203,00007Fx\u{0f}");
+
+    // Also reachable via fallback style composition.
     let base = "text".red(); // palette fg only
     let merged = base.with_fallback_style(Style::new().on_rgb(10, 20, 30));
     let rendered = merged.to_irc_string();

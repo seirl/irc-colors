@@ -140,13 +140,14 @@ impl Color {
 /// `\x03` code) or a 24-bit RGB value (sent with the newer `\x04` hex-color
 /// code from [IRC Formatting](https://modern.ircdocs.horse/formatting#hex-color)).
 ///
-/// Support for `\x04` varies by client; standard `\x04RRGGBB` and
-/// `\x04RRGGBB,RRGGBB` sequences are specified so clients that don't render
-/// them still parse past them safely. However, the `\x04` specification has
-/// no default-foreground placeholder (unlike `\x0399,<BG>`), so an RGB
-/// background without a foreground emits non-standard `\x04,RRGGBB` — pair
-/// [`Colorize::on_rgb`] with an explicit foreground color for broad client
-/// compatibility.
+/// Support for `\x04` varies by client: clients that recognize `\x04` without
+/// rendering 24-bit color can strip standard `\x04RRGGBB` and
+/// `\x04RRGGBB,RRGGBB` sequences, whereas clients unaware of `\x04` altogether
+/// typically display the hex digits as literal text. In addition, the `\x04`
+/// specification has no default-foreground placeholder (unlike `\x0399,<BG>`),
+/// so an RGB background without a foreground emits non-standard `\x04,RRGGBB`
+/// — pair [`Colorize::on_rgb`] with an explicit foreground color for broader
+/// `\x04` client compatibility.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ColorValue {
     Palette(Color),
@@ -307,8 +308,6 @@ impl Style {
     }
 }
 
-// Written out explicitly rather than via `macro_rules!` for clean rustdoc
-// output and IDE go-to-definition across the fixed 16-color palette.
 #[rustfmt::skip]
 impl Style {
     pub const fn white(self) -> Self { self.palette_fg(Color::White) }
@@ -391,7 +390,7 @@ impl Text {
         self.spans
     }
 
-    /// Whether this text has no visible or whitespace content.
+    /// Whether this text contains no characters (all spans are empty).
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.spans.is_empty()
@@ -445,6 +444,10 @@ impl Text {
     /// human actually looking at the text would get, which isn't always
     /// the same as the `char` count (an emoji built from multiple code
     /// points, or a letter with a combining accent, is one visible unit).
+    ///
+    /// Note that this measures neither terminal display width (e.g. double-width
+    /// CJK characters) nor IRC protocol length limits, which are counted in
+    /// wire bytes — use [`Text::wire_len`] or [`Text::wrap`] for wire budgets.
     #[must_use]
     pub fn visible_len(&self) -> usize {
         self.spans
@@ -469,11 +472,11 @@ impl Text {
     /// verbatim; use [`Text::wrap`] or [`Text::split_lines`] to split
     /// multi-line text into frame-safe IRC messages).
     ///
-    /// If a span's `fg`/`bg` mix a palette [`Color`] with an RGB value (only
-    /// possible via [`Colorize::with_fallback_style`] composition, not the ordinary
-    /// [`Colorize`] chain), both are still rendered correctly: the whole
-    /// pair is sent in the hex form, with the palette side converted via
-    /// its canonical RGB value ([`Color::to_rgb`]) rather than dropped.
+    /// If a span's `fg`/`bg` mix a palette [`Color`] with an RGB value (for
+    /// example `"x".red().on_rgb(1, 2, 3)`), both are still rendered
+    /// correctly: the whole pair is sent in `\x04` hex form, with the palette
+    /// side converted via its canonical RGB value ([`Color::to_rgb`]) rather
+    /// than dropped.
     #[must_use]
     pub fn to_irc_string(&self) -> String {
         let mut out = String::with_capacity(self.wire_len());
@@ -496,14 +499,22 @@ impl Text {
     /// most `max_bytes` bytes on the wire (unless a single grapheme cluster
     /// plus its own setup/reset codes exceeds `max_bytes`, in which case that
     /// 1-grapheme chunk is emitted intact rather than tearing UTF-8/grapheme
-    /// sequences or dropping text). Breaks on spaces (`' '`, consuming the
-    /// break-point spaces) and never splits a word in half unless a single
-    /// word alone exceeds `max_bytes`, in which case it's hard-split at a
-    /// grapheme-cluster boundary — so a multi-codepoint character like an
-    /// emoji or an accented letter is never torn apart. Explicit `\n`s,
-    /// `\r\n`s, and `\r`s always force a break, and empty lines or chunks are
-    /// omitted so every returned `Text` is safe to send directly as an IRC
-    /// `PRIVMSG`.
+    /// sequences or dropping text).
+    ///
+    /// `max_bytes` is the byte budget for the trailing message parameter alone;
+    /// callers sending over IRC must subtract the `:nick!user@host PRIVMSG
+    /// <target> :` prefix and trailing `\r\n` from the 512-byte IRC frame limit.
+    ///
+    /// Breaks on spaces (`' '`, consuming the break-point spaces) and never
+    /// splits a word in half unless a single word alone exceeds `max_bytes`, in
+    /// which case it's hard-split at a grapheme-cluster boundary — so a
+    /// multi-codepoint character like an emoji or an accented letter is never
+    /// torn apart. Leading spaces on a line are preserved if they fit together
+    /// with the first word within `max_bytes`, and dropped otherwise rather
+    /// than emitting a space-only line or tearing a fitting word. Explicit
+    /// `\n`s, `\r\n`s, and `\r`s always force a break, and empty lines or
+    /// chunks are omitted so every returned `Text` is safe to send directly as
+    /// an IRC `PRIVMSG`.
     ///
     /// Because every [`Span`] carries its full resolved style (see above),
     /// each returned chunk re-serializes its own leading codes from
