@@ -152,34 +152,25 @@ fn parse_does_not_swallow_a_literal_comma_after_a_color_code() {
 }
 
 #[test]
-fn parse_supports_background_only_color_spec() {
-    // Although our serializer emits spec-compliant `\x0399,04`, incoming text
-    // from other senders may use bare `\x03,04` — must still parse cleanly.
-    let parsed = Text::parse("\u{03},04text");
-    assert_eq!(parsed.plain(), "text");
-    assert_eq!(parsed.spans()[0].style.fg, None);
-    assert_eq!(
-        parsed.spans()[0].style.bg,
-        Some(ColorValue::Palette(Color::Red))
-    );
+fn parse_bare_x03_before_comma_digits_resets_color_without_eating_text() {
+    use irc_colors::Style;
 
-    // A bare `,bg` after an already-active foreground preserves that foreground,
-    // symmetrical with how a foreground-only spec preserves an active background.
-    let kept_fg = Text::parse("\u{03}02hi\u{03},04there");
-    assert_eq!(
-        kept_fg.spans()[0].style.fg,
-        Some(ColorValue::Palette(Color::Blue))
-    );
-    assert_eq!(kept_fg.spans()[0].style.bg, None);
-    assert_eq!(
-        kept_fg.spans()[1].style.fg,
-        Some(ColorValue::Palette(Color::Blue))
-    );
-    assert_eq!(
-        kept_fg.spans()[1].style.bg,
-        Some(ColorValue::Palette(Color::Red))
-    );
+    // Bare `\x03` has no `<fg>` digits, so `,50` must stay literal text rather
+    // than being swallowed as a background code (e.g. `\x0304$1\x03,500`).
+    let price = Text::parse("\u{02}Total: \u{03}04$1\u{03},500\u{02}");
+    assert_eq!(price.plain(), "Total: $1,500");
+    assert_eq!(price.spans()[0].style, Style::new().bold());
+    assert_eq!(price.spans()[1].style, Style::new().bold().red());
+    assert_eq!(price.spans()[1].text, "$1");
+    assert_eq!(price.spans()[2].style, Style::new().bold());
+    assert_eq!(price.spans()[2].text, ",500");
 
+    let bare_comma = Text::parse("\u{03},04text");
+    assert_eq!(bare_comma.plain(), ",04text");
+    assert_eq!(bare_comma.spans()[0].style, Style::default());
+
+    // `\x04` has no `99` default-fg placeholder, so `\x04,<hex>` continues to
+    // update `bg` while preserving any active `fg`.
     let kept_hex_fg = Text::parse("\u{04}0000FFhi\u{04},FF0000there");
     assert_eq!(
         kept_hex_fg.spans()[1].style.fg,

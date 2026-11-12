@@ -679,8 +679,11 @@ impl Text {
     /// styled [`Text`], for e.g. relaying or re-wrapping someone else's message.
     ///
     /// Palette color code `99` (and any non-`0..=15` palette index) clears that
-    /// channel back to the default color. Background-only codes (`\x03,<bg>` and
-    /// `\x04,<hex>`) update `bg` while preserving any active `fg`.
+    /// channel back to the default color. Per the `\x03[<fg>[,<bg>]]` grammar,
+    /// `,<bg>` is only parsed when `<fg>` digits are present (use `\x0399,<bg>`
+    /// for default foreground), so a bare `\x03` color reset before `,digits`
+    /// (e.g. `\x0304$1\x03,500`) never swallows text; for `\x04` hex colors,
+    /// `\x04,<hex>` updates `bg` while preserving any active `fg`.
     pub fn parse(input: &str) -> Text {
         parse_irc(input)
     }
@@ -1222,14 +1225,19 @@ fn parse_irc(input: &str) -> Text {
     fn apply_color(
         s: &mut &str,
         style: &mut Style,
+        allow_bare_bg: bool,
         read: fn(&mut &str) -> Option<Option<ColorValue>>,
     ) {
         let fg = read(s);
-        let bg = s.strip_prefix(',').and_then(|mut rest| {
-            let bg = read(&mut rest)?;
-            *s = rest;
-            Some(bg)
-        });
+        let bg = if fg.is_some() || allow_bare_bg {
+            s.strip_prefix(',').and_then(|mut rest| {
+                let bg = read(&mut rest)?;
+                *s = rest;
+                Some(bg)
+            })
+        } else {
+            None
+        };
         if fg.is_none() && bg.is_none() {
             style.fg = None;
             style.bg = None;
@@ -1252,8 +1260,8 @@ fn parse_irc(input: &str) -> Text {
             CTRL_MONOSPACE => style.monospace = !style.monospace,
             CTRL_REVERSE => style.reverse = !style.reverse,
             CTRL_RESET => style = Style::default(),
-            CTRL_COLOR => apply_color(&mut s, &mut style, read_palette),
-            CTRL_HEX_COLOR => apply_color(&mut s, &mut style, read_hex),
+            CTRL_COLOR => apply_color(&mut s, &mut style, false, read_palette),
+            CTRL_HEX_COLOR => apply_color(&mut s, &mut style, true, read_hex),
             _ => unreachable!(),
         }
     }
