@@ -749,10 +749,17 @@ fn randomized_round_trip_and_wrap_invariants() {
         "\nsecond",
         "\u{02}raw\u{03}04",
         "nul\0byte",
+        "ctcp\u{01}tag",
         "superlongfragwithoutspaces",
     ];
 
-    for case in 0..300 {
+    let strip_breaks = |s: &str| -> String {
+        s.chars()
+            .filter(|&c| !matches!(c, ' ' | '\r' | '\n'))
+            .collect()
+    };
+
+    for case in 0..500 {
         let span_count = (next_u32() % 8 + 1) as usize;
         let mut t = Text::new();
 
@@ -819,12 +826,20 @@ fn randomized_round_trip_and_wrap_invariants() {
             wire
         );
 
+        let expected_non_break = strip_breaks(&t.plain());
         for max_bytes in [22usize, 36, 45, 120] {
-            for chunk in t.wrap(max_bytes) {
+            let chunks = t.wrap(max_bytes);
+            let mut wrapped_plain = String::new();
+            for chunk in chunks {
                 assert!(!chunk.is_empty());
                 let cw = chunk.to_irc_string();
                 assert_eq!(chunk.wire_len(), cw.len());
-                assert!(!cw.contains('\0') && !cw.contains('\r') && !cw.contains('\n'));
+                assert!(
+                    !cw.contains('\0')
+                        && !cw.contains('\u{01}')
+                        && !cw.contains('\r')
+                        && !cw.contains('\n')
+                );
                 // Only when a single grapheme + its own required setup/reset
                 // codes exceeds `max_bytes` is a 1-grapheme chunk allowed to
                 // exceed `max_bytes` (rather than tearing UTF-8 / ZWJ sequences).
@@ -838,8 +853,16 @@ fn randomized_round_trip_and_wrap_invariants() {
                         cw
                     );
                 }
-                assert_eq!(Text::parse(&cw), chunk.styled(normalize_wire));
+                assert_eq!(Text::parse(&cw), (&chunk).styled(normalize_wire));
+                wrapped_plain.push_str(&chunk.plain());
             }
+            assert_eq!(
+                strip_breaks(&wrapped_plain),
+                expected_non_break,
+                "wrap({}) lost or altered plain text on case {}",
+                max_bytes,
+                case
+            );
         }
     }
 }
