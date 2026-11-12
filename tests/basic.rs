@@ -4,7 +4,10 @@ use irc_colors::{Color, ColorValue, Colorize, Text};
 fn chain_and_concat() {
     let msg = "Hello".bold().red() + " world".underline().blue();
     let rendered = msg.to_irc_string();
-    println!("{:?}", rendered);
+    assert_eq!(
+        rendered,
+        "\u{02}\u{03}04Hello\u{0f}\u{1f}\u{03}02 world\u{0f}"
+    );
     assert_eq!(msg.plain(), "Hello world");
 }
 
@@ -237,6 +240,11 @@ fn add_assign_builds_incrementally() {
     msg += " ";
     msg += "world".to_string();
     assert_eq!(msg.plain(), "Hello world");
+
+    msg.clear();
+    assert!(msg.is_empty());
+    msg += "reused".blue();
+    assert_eq!(msg, "reused".blue());
 }
 
 #[test]

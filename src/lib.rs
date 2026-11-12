@@ -307,6 +307,8 @@ impl Style {
     }
 }
 
+// Written out explicitly rather than via `macro_rules!` for clean rustdoc
+// output and IDE go-to-definition across the fixed 16-color palette.
 #[rustfmt::skip]
 impl Style {
     pub const fn white(self) -> Self { self.palette_fg(Color::White) }
@@ -393,6 +395,11 @@ impl Text {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.spans.is_empty()
+    }
+
+    /// Remove all spans, keeping the underlying allocation for reuse.
+    pub fn clear(&mut self) {
+        self.spans.clear();
     }
 
     fn push<'a>(&mut self, text: impl Into<Cow<'a, str>>, style: Style) {
@@ -505,6 +512,9 @@ impl Text {
     #[must_use]
     pub fn wrap(&self, max_bytes: usize) -> Vec<Text> {
         let mut lines = Vec::new();
+        // Pre-split on line breaks so cross-span `\r\n` logic stays in one place
+        // and each fitting line hits `wrap_line`'s `wire_len` fast path without
+        // running Unicode grapheme segmentation.
         if self.has_line_break() {
             for line in self.split_lines_inner() {
                 Self::wrap_line(Cow::Owned(line), max_bytes, &mut lines);
@@ -639,21 +649,17 @@ impl Text {
         Text: AddAssign<I::Item>,
         S: Into<Text>,
     {
-        let mut iter = iter.into_iter();
-        let Some(first) = iter.next() else {
-            return Text::new();
-        };
+        let mut iter = iter.into_iter().peekable();
         let mut out = Text::new();
-        out += first;
-        let Some(second) = iter.next() else {
-            return out;
-        };
-        let sep = sep.into();
-        AddAssign::<&Text>::add_assign(&mut out, &sep);
-        out += second;
-        for item in iter {
-            AddAssign::<&Text>::add_assign(&mut out, &sep);
-            out += item;
+        if let Some(first) = iter.next() {
+            out += first;
+            if iter.peek().is_some() {
+                let sep = sep.into();
+                for item in iter {
+                    AddAssign::<&Text>::add_assign(&mut out, &sep);
+                    out += item;
+                }
+            }
         }
         out
     }
@@ -662,12 +668,16 @@ impl Text {
     /// styled [`Text`], for e.g. relaying or re-wrapping someone else's message.
     ///
     /// Palette color code `99` (and any non-`0..=15` palette index) clears that
-    /// channel back to the default color.
+    /// channel back to the default color. Background-only codes (`\x03,<bg>` and
+    /// `\x04,<hex>`) update `bg` while preserving any active `fg`.
     pub fn parse(input: &str) -> Text {
         parse_irc(input)
     }
 }
 
+// `Cow<'_, str>` intentionally does not implement `From`/`Add`/`AddAssign`:
+// without `From<Cow<str>>`, `cow.red()` borrows via `Deref<Target = str>`
+// instead of moving `cow` (while `Text::raw(cow)` still takes `Cow` by value).
 impl From<&str> for Text {
     fn from(s: &str) -> Self {
         Text::new() + s
@@ -1075,6 +1085,8 @@ fn emit_style(out: &mut impl fmt::Write, s: Style, starts_with_comma: bool) -> f
 
     // A foreground-only color followed by `,` could have `,` + digits
     // eaten as a background color; nudge apart with an empty bold pair.
+    // Checked on `,` alone (without digit lookahead) so per-grapheme `LineBuf`
+    // accounting always matches coalesced `Span` serialization.
     if s.fg.is_some() && s.bg.is_none() && starts_with_comma {
         out.write_char(CTRL_BOLD)?;
         out.write_char(CTRL_BOLD)?;
@@ -1093,10 +1105,7 @@ fn push_styled(
         return Ok(());
     }
     if style != *cur {
-        if style != Style::default()
-            && *cur != Style::default()
-            && (cur.fg, cur.bg) == (style.fg, style.bg)
-        {
+        if style != Style::default() && (cur.fg, cur.bg) == (style.fg, style.bg) {
             emit_toggles(out, *cur, style)?;
         } else {
             if *cur != Style::default() {
