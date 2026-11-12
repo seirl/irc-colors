@@ -1179,7 +1179,10 @@ fn emit_style(out: &mut impl fmt::Write, s: Style, starts_with_comma: bool) -> f
 
     // `99` is the codified IRC default/transparent color code, used so `<FG>`
     // is never omitted before `,<BG>` on the wire for `\x03` palette/extended colors.
-    match (s.fg.and_then(ColorValue::code), s.bg.and_then(ColorValue::code)) {
+    match (
+        s.fg.and_then(ColorValue::code),
+        s.bg.and_then(ColorValue::code),
+    ) {
         _ if s.fg.is_none() && s.bg.is_none() => {}
         (Some(fg), None) if s.bg.is_none() => write!(out, "{CTRL_COLOR}{fg:02}")?,
         (None, Some(bg)) if s.fg.is_none() => write!(out, "{CTRL_COLOR}99,{bg:02}")?,

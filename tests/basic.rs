@@ -188,7 +188,10 @@ fn hex_and_palette_mixed_in_one_span_keeps_both_colors() {
 
     // Direct `Colorize` chain mixing palette fg with RGB bg (and vice versa).
     let direct = "x".red().on_rgb(1, 2, 3);
-    assert_eq!(direct.spans()[0].style.fg, Some(ColorValue::Palette(Color::Red)));
+    assert_eq!(
+        direct.spans()[0].style.fg,
+        Some(ColorValue::Palette(Color::Red))
+    );
     assert_eq!(direct.spans()[0].style.bg, Some(ColorValue::Rgb(1, 2, 3)));
     assert_eq!(direct.to_irc_string(), "\u{04}FF0000,010203x\u{0f}");
     let direct_reparsed = Text::parse(&direct.to_irc_string());
@@ -1040,7 +1043,10 @@ fn same_color_transitions_toggle_in_place() {
     assert_eq!(Text::parse(&nested_color.to_irc_string()), nested_color);
 
     let nested_plain = ("a " + "b".italic() + " c").bold();
-    assert_eq!(nested_plain.to_irc_string(), "\u{02}a \u{1d}b\u{1d} c\u{0f}");
+    assert_eq!(
+        nested_plain.to_irc_string(),
+        "\u{02}a \u{1d}b\u{1d} c\u{0f}"
+    );
     assert_eq!(Text::parse(&nested_plain.to_irc_string()), nested_plain);
 
     // Comma+digit on a toggled span stays safe both inline and across a wrap break.

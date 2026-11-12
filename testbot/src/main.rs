@@ -397,6 +397,8 @@ mod tests {
             }
         }
         assert_eq!(rgb_line("\x0304hi").plain(), "RGB: hi");
-        assert!(theme_line("\x0312SPARTA").plain().contains("This is SPARTA"));
+        assert!(theme_line("\x0312SPARTA")
+            .plain()
+            .contains("This is SPARTA"));
     }
 }
