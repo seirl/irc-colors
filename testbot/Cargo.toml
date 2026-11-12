@@ -1,0 +1,15 @@
+[package]
+name = "irc-colors-testbot"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+futures-util = "0.3"
+irc = { version = "1", default-features = false, features = ["tls-rust"] }
+irc-colors = { path = ".." }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
