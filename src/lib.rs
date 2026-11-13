@@ -845,6 +845,18 @@ impl From<&Text> for Text {
     }
 }
 
+/// Formats `args` directly into a plain, sanitized [`Text`] without an
+/// intermediate [`String`] allocation, stripping embedded IRC control, CTCP
+/// (`\x01`), and NUL bytes just like [`Text::raw`].
+///
+/// Because [`Colorize`] is implemented for every `Into<Text>`, [`format_args!`]
+/// values can be styled directly (e.g. `format_args!("{score:04}").bold().red()`).
+impl From<fmt::Arguments<'_>> for Text {
+    fn from(args: fmt::Arguments<'_>) -> Self {
+        Text::new() + args
+    }
+}
+
 impl IntoIterator for Text {
     type Item = Span;
     type IntoIter = alloc::vec::IntoIter<Span>;
@@ -962,7 +974,31 @@ impl Add<&Text> for String {
     }
 }
 
+impl Add<Text> for fmt::Arguments<'_> {
+    type Output = Text;
+    fn add(self, rhs: Text) -> Text {
+        Text::from(self) + rhs
+    }
+}
+
+impl Add<&Text> for fmt::Arguments<'_> {
+    type Output = Text;
+    fn add(self, rhs: &Text) -> Text {
+        Text::from(self) + rhs
+    }
+}
+
 // -- `+=`, for building messages incrementally in a loop --------------------
+
+struct PlainWriter<'a>(&'a mut Text);
+
+impl fmt::Write for PlainWriter<'_> {
+    #[inline]
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        self.0.push(s, Style::default());
+        Ok(())
+    }
+}
 
 impl AddAssign<Text> for Text {
     fn add_assign(&mut self, rhs: Text) {
@@ -1016,22 +1052,33 @@ impl AddAssign<&Span> for Text {
     }
 }
 
+impl AddAssign<fmt::Arguments<'_>> for Text {
+    fn add_assign(&mut self, rhs: fmt::Arguments<'_>) {
+        if let Some(s) = rhs.as_str() {
+            self.push(s, Style::default());
+        } else {
+            let _ = fmt::Write::write_fmt(&mut PlainWriter(self), rhs);
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Colorize — the fun, chainable builder, `colored`/`owo-colors`-style
 // ---------------------------------------------------------------------------
 
-/// Chainable styling for anything that can become [`Text`]: `&str`,
-/// `String`, or an existing `Text`. Calling a method twice (e.g. `.bold()`
-/// then later `.red()`) just fills in more attributes — later calls in a
-/// chain always win, so `"x".blue().red()` is red, same as you'd expect
-/// from a normal builder.
+/// Chainable styling for anything that can become [`Text`]: `&str`, `String`,
+/// [`fmt::Arguments`] ([`format_args!`]), [`Span`], or an existing [`Text`].
+/// Calling a method twice (e.g. `.bold()` then later `.red()`) just fills in
+/// more attributes — later calls in a chain always win, so `"x".blue().red()`
+/// is red, same as you'd expect from a normal builder.
 ///
 /// ```
 /// use irc_colors::Colorize;
 /// let a = "hello".bold().red();
 /// let b = "warning".on_yellow().black();
-/// let c = a + " " + b;
-/// # let _ = c;
+/// let c = format_args!("{:04}", 42).bold().cyan();
+/// let d = a + " " + b + " " + c;
+/// # let _ = d;
 /// ```
 #[rustfmt::skip]
 pub trait Colorize: Into<Text> + Sized {
@@ -1416,8 +1463,9 @@ fn parse_irc(input: &str) -> Text {
 /// # Limitations
 ///
 /// - Format specifiers (`:spec`) render through [`core::fmt`] as plain
-///   sanitized text; apply [`Colorize`] to the formatted value (or to the
-///   returned [`Text`]) when styling padded/numeric values.
+///   sanitized text; style formatted values with [`format_args!`] +
+///   [`Colorize`] (e.g. `format_args!("{score:04}").bold().red()`) or style
+///   the returned [`Text`].
 /// - Dynamic width and precision parameters (`{:>width$}`, `{:.*}`) are not
 ///   supported and produce a compile-time error.
 ///
@@ -1490,23 +1538,6 @@ pub mod __private {
         out.push_clean(s, Style::default());
     }
 
-    pub struct SanitizingWriter<'a>(pub &'a mut Text);
-
-    impl SanitizingWriter<'_> {
-        #[inline]
-        pub fn write_fmt(&mut self, args: fmt::Arguments<'_>) -> fmt::Result {
-            fmt::Write::write_fmt(self, args)
-        }
-    }
-
-    impl fmt::Write for SanitizingWriter<'_> {
-        #[inline]
-        fn write_str(&mut self, s: &str) -> fmt::Result {
-            self.0.push(s, Style::default());
-            Ok(())
-        }
-    }
-
     pub trait AsIrcPiece {
         fn write_piece(&self, out: &mut Text);
     }
@@ -1555,7 +1586,7 @@ pub mod __private {
     impl<T: fmt::Display> FallbackDisplay for Wrap<T> {
         #[inline]
         fn __write_plain(&self, out: &mut Text) {
-            let _ = fmt::Write::write_fmt(&mut SanitizingWriter(out), format_args!("{}", self.0));
+            *out += format_args!("{}", self.0);
         }
     }
 }

@@ -17,8 +17,9 @@ let warn = "DANGER".bold().white().on_red();
 // italics, strikethrough, monospace, and 24-bit hex color too
 let fancy = "old price".strikethrough() + " " + "new price".rgb(255, 105, 180);
 
-// plain strings mix in for free
-let line = "Level: " + "critical".bold().red() + "!";
+// plain strings and `format_args!` mix in for free
+let score = 42;
+let line = "Level: " + "critical".bold().red() + " (" + format_args!("{score:04}").cyan() + ")!";
 
 // splits into IRC-safe messages by wire byte length, preserving styles across chunks
 for chunk in line.wrap(400) {
@@ -45,7 +46,7 @@ let line = irc_format!("User {} ({nick}) scored {score:04}!", "VIP".bold().yello
 
 ## Features
 
-- **Chainable `Colorize` builder** on `&str`, `String`, `&String`, `Span`, `&Span`, `Text`, and `&Text` (16 standard IRC palette colors, extended palette codes `16..=98`, 24-bit `\x04` RGB colors, bold, italic, underline, strikethrough, monospace, reverse, and fallback themes).
+- **Chainable `Colorize` builder** on `&str`, `String`, `&String`, `fmt::Arguments` (`format_args!`), `Span`, `&Span`, `Text`, and `&Text` (16 standard IRC palette colors, extended palette codes `16..=98`, 24-bit `\x04` RGB colors, bold, italic, underline, strikethrough, monospace, reverse, and fallback themes).
 - **Stateless `Span` model**: every span carries its complete resolved `Style`, so concatenating, slicing, or wrapping never loses formatting state across message boundaries.
 - **Byte-accurate `Text::wrap(max_bytes)`**: accounts for control/reset code overhead on the wire, breaks cleanly on spaces and `\r\n`/`\n`/`\r`, omits empty chunks, and falls back to Unicode grapheme-cluster splits for overlong words without tearing multi-codepoint emoji or accents.
 - **Round-trip `Text::parse`**: parses incoming IRC-formatted strings back into canonical `Text` for relaying, inspecting, or re-wrapping.

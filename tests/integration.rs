@@ -359,8 +359,20 @@ mod format_macro {
             aligned.plain(),
             format!("[{:>6.2}] [{:^5}] [{:$<4}] [{:*>4}]", "abcde", "hi", "a", 9)
         );
-        // Control char used as fill is stripped by `SanitizingWriter`.
+        // Control char used as fill is stripped.
         assert_eq!(irc_format!("{:\x02>6}", 42), Text::raw("42"));
+
+        // Styled formatted values compose cleanly via `format_args!(...).bold().red()`.
+        let w = 6usize;
+        let styled_spec = irc_format!(
+            "Score: {} ({})",
+            format_args!("{n:04}").bold().red(),
+            format_args!("{hex_val:#0w$x}").cyan(),
+        );
+        assert_eq!(
+            styled_spec,
+            "Score: " + "0042".bold().red() + " (" + "0xfeed".cyan() + ")"
+        );
     }
 
     #[test]

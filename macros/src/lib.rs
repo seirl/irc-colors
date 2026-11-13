@@ -253,11 +253,7 @@ fn expand(krate: &TokenStream2, raw_args: TokenStream2) -> TokenStream2 {
                 } else {
                     let mini_fmt = format!("{{0:{spec}}}");
                     stmts.push(quote! {
-                        let _ = ::core::write!(
-                            &mut #krate::__private::SanitizingWriter(&mut __irc_text),
-                            #mini_fmt,
-                            #place
-                        );
+                        __irc_text += ::core::format_args!(#mini_fmt, #place);
                     });
                 }
             }

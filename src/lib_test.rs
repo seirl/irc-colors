@@ -973,3 +973,46 @@ fn extended_colors_round_trip_and_mix_cleanly() {
     assert_eq!(relayed.spans()[2].style.fg, None);
     assert_eq!(relayed.spans()[2].style.bg, None);
 }
+
+#[test]
+fn format_args_colorize_concat_and_sanitize() {
+    let score = 42u32;
+    let width = 6usize;
+
+    // `Colorize` works directly on `format_args!` (including dynamic widths).
+    let badge = format_args!("{score:04}").bold().red();
+    assert_eq!(badge, "0042".bold().red());
+    assert_eq!(badge.to_irc_string(), "\u{02}\u{03}040042\u{0f}");
+
+    let aligned = format_args!("{score:>width$}").cyan();
+    assert_eq!(aligned, "    42".cyan());
+
+    // Static literal fast-path (`Arguments::as_str() == Some(...)`), including sanitization.
+    assert_eq!(Text::from(format_args!("plain")), Text::raw("plain"));
+    assert_eq!(format_args!("a\u{02}b\u{01}\0c").green(), "abc".green());
+
+    // Symmetric `+` and `+=` with owned and borrowed `Text`, coalescing plain spans.
+    let mut line = format_args!("User #{}: ", 7) + &badge;
+    line += format_args!(" ({:.1}%)", 99.95);
+    assert_eq!(line, "User #7: " + "0042".bold().red() + " (100.0%)");
+    assert_eq!(
+        format_args!(">> ") + "ok".green(),
+        Text::raw(">> ") + "ok".green()
+    );
+    assert_eq!((&"ok".green()) + format_args!(" <<"), "ok".green() + " <<");
+
+    // `FromIterator` / `Extend` / `Text::join` also accept `fmt::Arguments`.
+    let (a, b, sep) = (1, 2, "|");
+    let joined = Text::join(
+        [format_args!("#{a:02}"), format_args!("#{b:02}")],
+        format_args!(" {sep} "),
+    );
+    assert_eq!(joined, Text::raw("#01 | #02"));
+
+    // Untrusted `Display` data inside `format_args!` cannot inject control/CTCP/NUL bytes.
+    let evil = "\0\u{01}ACTION \u{02}bold\u{0f}escape\u{01}";
+    let safe = format_args!("Alert: {evil}!").red();
+    assert_eq!(safe, "Alert: ACTION boldescape!".red());
+    assert_eq!(safe.spans().len(), 1);
+    assert_eq!(Text::parse(&safe.to_irc_string()), safe);
+}
