@@ -46,6 +46,8 @@
 #![forbid(unsafe_code)]
 
 extern crate alloc;
+#[cfg(test)]
+extern crate std;
 
 use alloc::borrow::Cow;
 use alloc::string::String;
@@ -1557,3 +1559,6 @@ pub mod __private {
         }
     }
 }
+
+#[cfg(test)]
+mod lib_test;

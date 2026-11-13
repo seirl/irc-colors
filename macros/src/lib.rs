@@ -106,6 +106,7 @@ impl Parse for FormatCall {
     }
 }
 
+#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 enum Piece<'a> {
     Literal(&'a str),
     Placeholder { arg: &'a str, spec: &'a str },
@@ -321,3 +322,6 @@ const fn is_irc_control_char(c: char) -> bool {
             | '\x1f'
     )
 }
+
+#[cfg(test)]
+mod lib_test;
