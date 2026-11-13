@@ -25,7 +25,21 @@
 //! for chunk in line.wrap(400) {
 //!     println!("{}", chunk); // ready to send as a PRIVMSG
 //! }
-//! # let _ = (warn, fancy);
+//! # let _ = (msg, warn, fancy);
+//! ```
+//!
+//! Enable the optional `format` Cargo feature (`features = ["format"]`) for
+//! `format!`-style interpolation via `irc_format!`:
+//!
+//! ```
+//! # #[cfg(feature = "format")]
+//! # {
+//! use irc_colors::{irc_format, Colorize};
+//!
+//! let score = 42;
+//! let line = irc_format!("Level: {} (score: {score:04})!", "critical".bold().red());
+//! assert_eq!(line.plain(), "Level: critical (score: 0042)!");
+//! # }
 //! ```
 
 #![no_std]
@@ -459,9 +473,10 @@ impl Style {
 
 /// Formatted IRC text: an ordered sequence of styled [`Span`]s.
 ///
-/// Build one with plain strings, style them with [`Colorize`], glue pieces
-/// together with `+`, and turn the result into wire bytes with
-/// [`Text::to_irc_string`] (or just `.to_string()` / `{}` via [`Display`](fmt::Display)).
+/// Build one with `irc_format!` (with the `format` feature), or style plain
+/// strings with [`Colorize`] and glue pieces together with `+`, then turn the
+/// result into wire bytes with [`Text::to_irc_string`] (or just `.to_string()`
+/// / `{}` via [`Display`](fmt::Display)).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct Text {
     spans: Vec<Span>,
@@ -865,6 +880,12 @@ where
         let mut out = Text::new();
         out.extend(iter);
         out
+    }
+}
+
+impl fmt::Display for Span {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Text::from(self).write_irc(f)
     }
 }
 
@@ -1371,4 +1392,168 @@ fn parse_irc(input: &str) -> Text {
     out.push_clean(s, style);
 
     out
+}
+
+// ---------------------------------------------------------------------------
+// `irc_format!` — `format!`-style interpolation returning a `Text`
+// ---------------------------------------------------------------------------
+
+/// Build a [`Text`] using [`format!`](alloc::format!)-style string interpolation.
+///
+/// *Requires the **`format`** Cargo feature (`features = ["format"]`).*
+///
+/// [`Text`] and [`Span`] arguments (owned or borrowed) preserve their styling,
+/// while any other [`Display`](fmt::Display) value (`&str`, `String`, numbers,
+/// etc.) is formatted as plain text with embedded IRC control bytes, CTCP
+/// delimiters (`\x01`), and NUL bytes stripped — matching [`Text::raw`].
+///
+/// Supports positional (`{}`, `{0}`), named (`name = val`), and implicitly
+/// captured (`{name}`) arguments, as well as standard [`core::fmt`] specifiers
+/// (`{:04}`, `{:.2}`, `{:?}`, `{:#x}`, `{:>10}`, etc.).
+///
+/// # Limitations
+///
+/// - Format specifiers (`:spec`) render through [`core::fmt`] as plain
+///   sanitized text; apply [`Colorize`] to the formatted value (or to the
+///   returned [`Text`]) when styling padded/numeric values.
+/// - Dynamic width and precision parameters (`{:>width$}`, `{:.*}`) are not
+///   supported and produce a compile-time error.
+///
+/// # Examples
+///
+/// ```
+/// use irc_colors::{irc_format, Colorize};
+///
+/// let nick = "alice";
+/// let score = 42;
+/// let msg = irc_format!(
+///     "User {} ({nick}) scored {score:04}!",
+///     "VIP".bold().yellow(),
+/// );
+/// assert_eq!(msg.plain(), "User VIP (alice) scored 0042!");
+/// ```
+///
+/// Untrusted plain strings cannot inject IRC formatting or CTCP frames:
+///
+/// ```
+/// use irc_colors::{irc_format, Colorize};
+///
+/// let untrusted = "\x02spoofed\x01";
+/// let msg = irc_format!("Alert: {untrusted} ({})", "real".red());
+/// assert_eq!(msg.plain(), "Alert: spoofed (real)");
+/// assert_eq!(msg.spans().len(), 3);
+/// assert_eq!(msg.spans()[0].style.fg, None);
+/// ```
+///
+/// Compile-time checks mirror `format!` (unmatched braces, missing or unused
+/// arguments, positional-after-named):
+///
+/// ```compile_fail
+/// use irc_colors::irc_format;
+/// let _ = irc_format!("unused arg", 123);
+/// ```
+///
+/// ```compile_fail
+/// use irc_colors::irc_format;
+/// let _ = irc_format!("missing {}", );
+/// ```
+///
+/// ```compile_fail
+/// use irc_colors::irc_format;
+/// let _ = irc_format!("{a} {}", a = 1, 2);
+/// ```
+///
+/// ```compile_fail
+/// use irc_colors::irc_format;
+/// let w = 4usize;
+/// let _ = irc_format!("{:>w$}", "hi");
+/// ```
+#[cfg(feature = "format")]
+#[macro_export]
+macro_rules! irc_format {
+    ($($tt:tt)*) => {
+        $crate::__private::irc_format_impl!($crate; $($tt)*)
+    };
+}
+
+#[cfg(feature = "format")]
+#[doc(hidden)]
+pub mod __private {
+    use super::*;
+
+    pub use irc_colors_macros::__irc_format_impl as irc_format_impl;
+
+    #[inline]
+    pub fn push_clean_str(out: &mut Text, s: &str) {
+        out.push_clean(s, Style::default());
+    }
+
+    pub struct SanitizingWriter<'a>(pub &'a mut Text);
+
+    impl SanitizingWriter<'_> {
+        #[inline]
+        pub fn write_fmt(&mut self, args: fmt::Arguments<'_>) -> fmt::Result {
+            fmt::Write::write_fmt(self, args)
+        }
+    }
+
+    impl fmt::Write for SanitizingWriter<'_> {
+        #[inline]
+        fn write_str(&mut self, s: &str) -> fmt::Result {
+            self.0.push(s, Style::default());
+            Ok(())
+        }
+    }
+
+    pub trait AsIrcPiece {
+        fn write_piece(&self, out: &mut Text);
+    }
+
+    impl AsIrcPiece for Text {
+        #[inline]
+        fn write_piece(&self, out: &mut Text) {
+            *out += self;
+        }
+    }
+
+    impl AsIrcPiece for Span {
+        #[inline]
+        fn write_piece(&self, out: &mut Text) {
+            *out += self;
+        }
+    }
+
+    impl<T: AsIrcPiece + ?Sized> AsIrcPiece for &T {
+        #[inline]
+        fn write_piece(&self, out: &mut Text) {
+            (**self).write_piece(out);
+        }
+    }
+
+    impl<T: AsIrcPiece + ?Sized> AsIrcPiece for &mut T {
+        #[inline]
+        fn write_piece(&self, out: &mut Text) {
+            (**self).write_piece(out);
+        }
+    }
+
+    pub struct Wrap<T>(pub T);
+
+    impl<T: AsIrcPiece> Wrap<T> {
+        #[inline]
+        pub fn __write_plain(&self, out: &mut Text) {
+            self.0.write_piece(out);
+        }
+    }
+
+    pub trait FallbackDisplay {
+        fn __write_plain(&self, out: &mut Text);
+    }
+
+    impl<T: fmt::Display> FallbackDisplay for Wrap<T> {
+        #[inline]
+        fn __write_plain(&self, out: &mut Text) {
+            let _ = fmt::Write::write_fmt(&mut SanitizingWriter(out), format_args!("{}", self.0));
+        }
+    }
 }

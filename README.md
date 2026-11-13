@@ -26,6 +26,23 @@ for chunk in line.wrap(400) {
 }
 ```
 
+## `irc_format!` macro (optional)
+
+Enable the `format` feature in `Cargo.toml` to build `Text` values with `std::format!`-style interpolation (`{}`, `{0}`, `{name}`, `name = val`, and static `core::fmt` specifiers like `{:04}`, `{:.2}`, `{:?}`, `{:#x}`; dynamic `$` / `.*` width/precision counts are not supported). Styled `Text`/`Span` values keep their styles, while plain `Display` arguments strip IRC control/CTCP/NUL bytes:
+
+```toml
+[dependencies]
+irc-colors = { version = "0.1", features = ["format"] }
+```
+
+```rust
+use irc_colors::{irc_format, Colorize};
+
+let nick = "alice";
+let score = 42;
+let line = irc_format!("User {} ({nick}) scored {score:04}!", "VIP".bold().yellow());
+```
+
 ## Features
 
 - **Chainable `Colorize` builder** on `&str`, `String`, `&String`, `Span`, `&Span`, `Text`, and `&Text` (16 standard IRC palette colors, extended palette codes `16..=98`, 24-bit `\x04` RGB colors, bold, italic, underline, strikethrough, monospace, reverse, and fallback themes).

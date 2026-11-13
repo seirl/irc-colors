@@ -1190,3 +1190,188 @@ fn extended_colors_round_trip_and_mix_cleanly() {
     assert_eq!(relayed.spans()[2].style.fg, None);
     assert_eq!(relayed.spans()[2].style.bg, None);
 }
+
+#[cfg(feature = "format")]
+mod format_macro {
+    use super::*;
+    use irc_colors::irc_format;
+
+    #[test]
+    fn irc_format_literals_escapes_and_raw_strings() {
+        assert_eq!(irc_format!(""), Text::new());
+        assert!(irc_format!("\x02\x0f\0\x01").is_empty());
+
+        let plain = irc_format!("Hello, {{world}}!");
+        assert_eq!(plain, Text::raw("Hello, {world}!"));
+        assert_eq!(plain.spans().len(), 1);
+
+        let escaped = irc_format!(
+            "a\nb\tc\\d\"e'f\x41\u{1F600}\u{1F_600} \
+         continued"
+        );
+        assert_eq!(escaped.plain(), "a\nb\tc\\d\"e'fA😀😀 continued");
+
+        let raw0 = irc_format!(r"raw \n {{literal}} {}", "ok".green());
+        assert_eq!(raw0, r"raw \n {literal} " + "ok".green());
+
+        let raw2 = irc_format!(r##"quotes " and "# inside {}"##, 7);
+        assert_eq!(raw2.plain(), "quotes \" and \"# inside 7");
+    }
+
+    #[test]
+    fn irc_format_preserves_styles_and_coalesces_plain_spans() {
+        use irc_colors::{Span, Style};
+        use std::borrow::Cow;
+
+        let nick = String::from("alice");
+        let score = 42u32;
+        let badge = "VIP".bold().yellow();
+        let borrowed_badge = &badge;
+        let double_ref = &borrowed_badge;
+        let mut mut_text = "mut".italic();
+        let mut_ref = &mut mut_text;
+        let span = Span::new("span\x02clean", Style::new().cyan());
+        let cow: Cow<'_, str> = Cow::Borrowed("cow");
+
+        let msg = irc_format!(
+            "User {nick} [{}] ({}/{}/{}/{}/{}/{cow}) scored {score}!",
+            "admin".red(),
+            badge,
+            borrowed_badge,
+            double_ref,
+            mut_ref,
+            &span,
+        );
+        assert_eq!(
+            msg,
+            "User alice ["
+                + "admin".red()
+                + "] ("
+                + "VIP".bold().yellow()
+                + "/"
+                + "VIP".bold().yellow()
+                + "/"
+                + "VIP".bold().yellow()
+                + "/"
+                + "mut".italic()
+                + "/"
+                + "spanclean".cyan()
+                + "/cow) scored 42!"
+        );
+        // `nick` and `badge` were borrowed, not moved!
+        assert_eq!(nick, "alice");
+        assert_eq!(badge, "VIP".bold().yellow());
+
+        // Purely plain `Display` arguments coalesce into a single `Span`.
+        let coalesced = irc_format!("Hello {nick}, {score} items ({})", true);
+        assert_eq!(coalesced.spans().len(), 1);
+        assert_eq!(coalesced.plain(), "Hello alice, 42 items (true)");
+    }
+
+    #[test]
+    fn irc_format_sanitizes_untrusted_display_inputs_everywhere() {
+        let evil = "\0\x01ACTION \x02bold\x0304red\x04FF0000hex\x0fplain\x01";
+        let evil_string = String::from(evil);
+        let real = "trusted".bold().green();
+
+        // Implicit capture, positional, named, and Debug (`{:?}`) must all strip control bytes.
+        let msg = irc_format!("<{evil}> {} | {named} | {real}", evil_string, named = evil,);
+        let clean = Text::raw(evil).plain();
+        assert_eq!(clean, "ACTION bold04redFF0000hexplain");
+        assert_eq!(
+            msg,
+            format!("<{clean}> {clean} | {clean} | ") + "trusted".bold().green()
+        );
+        assert!(!msg.to_irc_string().contains(['\0', '\x01']));
+
+        // Outer `.with_fallback_style` / `.red()` cannot be broken out of by `\x0f` in untrusted input.
+        let outer = irc_format!("Alert: {evil}!").red();
+        assert_eq!(outer, format!("Alert: {clean}!").red());
+        assert_eq!(outer.spans().len(), 1);
+        assert_eq!(Text::parse(&outer.to_irc_string()), outer);
+    }
+
+    #[test]
+    fn irc_format_positional_named_eval_once_and_raw_idents() {
+        use std::cell::Cell;
+
+        let calls = Cell::new(0usize);
+        let bump = || {
+            calls.set(calls.get() + 1);
+            "once".bold().blue()
+        };
+
+        let r#type = "kind";
+        let shadowed = "outer";
+        let msg = irc_format!(
+            "{1} -> {0} / {0} ({type}, {match}, {shadowed})",
+            bump(),
+            10,
+            r#match = "arm".yellow(),
+            shadowed = "inner".red(),
+        );
+        assert_eq!(shadowed, "outer");
+        assert_eq!(calls.get(), 1);
+        assert_eq!(
+            msg,
+            "10 -> "
+                + "once".bold().blue()
+                + " / "
+                + "once".bold().blue()
+                + " (kind, "
+                + "arm".yellow()
+                + ", "
+                + "inner".red()
+                + ")"
+        );
+    }
+
+    #[test]
+    fn irc_format_all_core_fmt_specifiers() {
+        let n = 42i32;
+        let hex_val = 0xfeedu32;
+        let float_val = 3.14159f64;
+        let ptr: *const u8 = 0x1234usize as *const u8;
+
+        let specs = irc_format!(
+            "{n:04}|{n:+05}|{hex_val:x}|{hex_val:#X}|{n:b}|{n:#o}|{float_val:.2}|{float_val:.1e}|{float_val:.1E}|{ptr:p}|{:?}|{:x?}|{:X?}|{:}",
+            ("a", 10),
+            [15u8],
+            [15u8],
+            "trivial".red(),
+        );
+        let expected_prefix = format!(
+            "{n:04}|{n:+05}|{hex_val:x}|{hex_val:#X}|{n:b}|{n:#o}|{float_val:.2}|{float_val:.1e}|{float_val:.1E}|{ptr:p}|{:?}|{:x?}|{:X?}|",
+            ("a", 10),
+            [15u8],
+            [15u8],
+        );
+        assert_eq!(specs, expected_prefix + "trivial".red());
+
+        // Alignment and `$`/`*` fill characters (static widths).
+        let aligned = irc_format!("[{:>6.2}] [{:^5}] [{:$<4}] [{:*>4}]", "abcde", "hi", "a", 9);
+        assert_eq!(
+            aligned.plain(),
+            format!("[{:>6.2}] [{:^5}] [{:$<4}] [{:*>4}]", "abcde", "hi", "a", 9)
+        );
+        // Control char used as fill is stripped by `SanitizingWriter`.
+        assert_eq!(irc_format!("{:\x02>6}", 42), Text::raw("42"));
+    }
+
+    #[test]
+    fn irc_format_inside_outer_macro_rules() {
+        macro_rules! log_line {
+        ($tag:expr, $fmt:literal $(, $arg:expr)* $(,)?) => {
+            irc_format!("[{}] {}", $tag.bold().cyan(), irc_format!($fmt $(, $arg)*))
+        };
+    }
+
+        let count = 3;
+        let line = log_line!("INFO", "processed {count} items: {}", "ok".light_green(),);
+        assert_eq!(
+            line,
+            "[" + "INFO".bold().cyan() + "] processed 3 items: " + "ok".light_green()
+        );
+        assert_eq!(irc_format!("eq={}", count == 3).plain(), "eq=true");
+    }
+}

@@ -1,8 +1,12 @@
+[workspace]
+members = [".", "macros"]
+exclude = ["testbot"]
+
 [package]
 name = "irc-colors"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.65"
+rust-version = "1.71"
 license = "MIT"
 description = "Ergonomic IRC text formatting, colors, parsing, and byte-accurate message wrapping"
 repository = "https://github.com/seirl/irc-colors"
@@ -10,5 +14,12 @@ readme = "README.md"
 keywords = ["irc", "color", "formatting", "mirc", "no_std"]
 categories = ["network-programming", "text-processing", "no-std"]
 
+[features]
+format = ["dep:irc-colors-macros"]
+
 [dependencies]
+irc-colors-macros = { version = "0.1.0", path = "macros", optional = true }
 unicode-segmentation = "1"
+
+[package.metadata.docs.rs]
+all-features = true
